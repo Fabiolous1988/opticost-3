@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Calculator as CalcIcon, Truck, Users, Hammer, FileDown, Search, MapPin, Building, TrainFront, Box, Plane, CreditCard, Calendar } from 'lucide-react';
+import { Settings, Calculator as CalcIcon, Truck, Users, Hammer, FileDown, Search, MapPin, Building, TrainFront, Box, Plane, CreditCard, Calendar, Weight, AlertCircle } from 'lucide-react';
 import { GlobalVariables, TransportRate, QuoteInputs, ServiceType, ModelData, BallastData } from '../types';
 import { calculateQuote } from '../services/calculationService';
 import { fetchLogisticsFromAI } from '../services/aiService';
@@ -10,9 +10,10 @@ interface Props {
   onOpenSettings: () => void;
   models: ModelData[];
   ballasts: BallastData[];
+  apiKey: string;
 }
 
-const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSettings, models, ballasts }) => {
+const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSettings, models, ballasts, apiKey }) => {
   
   const [inputs, setInputs] = useState<QuoteInputs>({
     serviceType: ServiceType.INSTALLAZIONE_COMPLETA,
@@ -48,6 +49,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
 
   const [result, setResult] = useState<any>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
 
   useEffect(() => {
     if (models.length > 0 && !inputs.modello) {
@@ -75,9 +77,20 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
   const handleAnalyzeAddress = async () => {
     if (!inputs.indirizzoCompleto) return;
     setAnalyzing(true);
-    const logistics = await fetchLogisticsFromAI(inputs.indirizzoCompleto);
-    setInputs(prev => ({ ...prev, logistics }));
-    setAnalyzing(false);
+    setAnalysisError(null);
+    try {
+        const logistics = await fetchLogisticsFromAI(inputs.indirizzoCompleto, apiKey);
+        if (logistics.fetched) {
+             setInputs(prev => ({ ...prev, logistics }));
+        } else {
+             setAnalysisError("Impossibile recuperare dati logistici dall'IA. Verifica l'indirizzo o la chiave API.");
+        }
+    } catch (e) {
+        console.error("Analysis failed", e);
+        setAnalysisError("Errore durante l'analisi. Riprova.");
+    } finally {
+        setAnalyzing(false);
+    }
   };
 
   const handlePrint = () => {
@@ -85,6 +98,8 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
   };
 
   const currentBallast = ballasts.find(b => b.nome === inputs.tipoZavorraNome);
+  const calculatedBallasts = inputs.optZavorre ? (1 + Math.ceil(inputs.postiAuto / 2)) : 0;
+  const calculatedBallastWeight = currentBallast ? (calculatedBallasts * currentBallast.peso_kg) : 0;
 
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-6">
@@ -186,6 +201,14 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                 </div>
             </div>
 
+            {/* Analysis Error Message */}
+            {analysisError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg flex items-center gap-2 text-sm">
+                  <AlertCircle size={16} />
+                  {analysisError}
+              </div>
+            )}
+
             {/* Transport Mode Toggle - Moved Here */}
             <div className="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200">
                 <span className="text-sm font-medium text-slate-700">Modalità Viaggio Tecnici:</span>
@@ -246,6 +269,35 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                       </div>
                     )}
                 </div>
+            )}
+            
+            {/* Assistenza Details */}
+            {inputs.serviceType === ServiceType.ASSISTENZA && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-slate-100">
+                 <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Numero Giorni</label>
+                    <input 
+                      type="number"
+                      min="1"
+                      value={inputs.assistenzaGiorni}
+                      onChange={(e) => handleInputChange('assistenzaGiorni', Number(e.target.value))}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2"
+                    />
+                 </div>
+                 <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Numero Tecnici</label>
+                    <select
+                      value={inputs.assistenzaTecniciCount}
+                      onChange={(e) => handleInputChange('assistenzaTecniciCount', Number(e.target.value))}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2"
+                    >
+                        <option value={1}>1 Tecnico</option>
+                        <option value={2}>2 Tecnici</option>
+                        <option value={3}>3 Tecnici</option>
+                        <option value={4}>4 Tecnici</option>
+                    </select>
+                 </div>
+              </div>
             )}
 
             {inputs.serviceType === ServiceType.INSTALLAZIONE_COMPLETA && (
@@ -382,198 +434,112 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                       onChange={(e) => handleInputChange('optZavorre', e.target.checked)}
                       className="w-5 h-5 text-blue-600 rounded cursor-pointer"
                     />
-                    <label htmlFor="optZavorre" className="text-lg font-semibold text-slate-800 cursor-pointer">Zavorre</label>
+                    <label htmlFor="optZavorre" className="text-lg font-semibold text-slate-800 flex items-center gap-2 cursor-pointer">
+                        <Weight size={20} className="text-slate-500"/> Zavorre
+                    </label>
                  </div>
                  
                  {inputs.optZavorre && (
-                   <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
-                        <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">Tipo Zavorra</label>
-                          <select 
-                             value={inputs.tipoZavorraNome}
-                             onChange={(e) => handleInputChange('tipoZavorraNome', e.target.value)}
-                             className="w-full border border-slate-300 rounded-lg px-3 py-2"
-                          >
-                             {ballasts.map(b => (
-                               <option key={b.nome} value={b.nome}>{b.nome} ({b.peso_kg}kg)</option>
-                             ))}
-                          </select>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-sm text-slate-500">Quantità calcolata: <span className="font-bold text-slate-800">{result?.numZavorre || 0}</span></div>
-                          <div className="text-xs text-slate-600 mt-1">
-                             Peso Singola Zavorra: <span className="font-semibold">{currentBallast?.peso_kg} kg</span><br/>
-                             Peso Totale Zavorre: <span className="font-bold text-slate-800">{result?.weightZavorre?.toLocaleString()} kg</span>
-                          </div>
-                        </div>
-                      </div>
-                   </div>
+                     <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 animate-in slide-in-from-top-2 duration-300">
+                         <label className="block text-sm font-medium text-slate-700 mb-2">Tipologia Zavorra</label>
+                         <select 
+                           value={inputs.tipoZavorraNome}
+                           onChange={(e) => handleInputChange('tipoZavorraNome', e.target.value)}
+                           className="w-full border border-slate-300 rounded-lg px-3 py-2 mb-4"
+                         >
+                            {ballasts.map(b => (
+                                <option key={b.nome} value={b.nome}>
+                                    {b.nome} ({b.peso_kg} kg)
+                                </option>
+                            ))}
+                         </select>
+                         
+                         <div className="flex justify-between items-center text-sm border-t border-slate-200 pt-2">
+                             <span className="text-slate-600">Quantità Calcolata: <strong>{calculatedBallasts} pz</strong></span>
+                             <span className="text-slate-600">Peso Totale Zavorre: <strong>{calculatedBallastWeight} kg</strong></span>
+                         </div>
+                     </div>
                  )}
               </div>
             </div>
-          )}
-
-          {/* Config (Assistenza) */}
-          {inputs.serviceType === ServiceType.ASSISTENZA && (
-             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
-               <h2 className="text-lg font-semibold text-slate-800">Dettagli Assistenza</h2>
-
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                 <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Giorni Lavoro</label>
-                    <input 
-                      type="number" 
-                      min="1"
-                      value={inputs.assistenzaGiorni}
-                      onChange={(e) => handleInputChange('assistenzaGiorni', Number(e.target.value))}
-                      className="w-full border border-slate-300 rounded-lg px-3 py-2"
-                    />
-                 </div>
-                 <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Tecnici Richiesti</label>
-                    <select 
-                       value={inputs.assistenzaTecniciCount}
-                       onChange={(e) => handleInputChange('assistenzaTecniciCount', Number(e.target.value))}
-                       className="w-full border border-slate-300 rounded-lg px-3 py-2"
-                    >
-                      <option value={1}>1 Tecnico</option>
-                      <option value={2}>2 Tecnici</option>
-                    </select>
-                 </div>
-               </div>
-             </div>
           )}
         </div>
 
         {/* RIGHT COLUMN: RESULTS */}
         <div className="lg:col-span-5 space-y-6">
-          <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden sticky top-6">
-             <div className="bg-slate-900 p-6 text-white">
-                <h2 className="text-xl font-bold mb-1">Totale Stimato</h2>
-                <div className="text-4xl font-bold text-green-400">€ {result?.sellPrice?.toLocaleString('it-IT', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
-                <div className="text-sm text-slate-400 mt-2">IVA Esclusa</div>
-             </div>
-             
-             <div className="p-6 space-y-4">
-                {/* Detailed Breakdown Table */}
-                <div className="border border-slate-200 rounded-lg overflow-hidden text-sm">
-                   <table className="w-full">
-                       <thead className="bg-slate-50 text-slate-500 font-medium">
-                           <tr>
-                               <th className="px-3 py-2 text-left">Voce di Costo</th>
-                               <th className="px-3 py-2 text-right">Importo</th>
-                           </tr>
-                       </thead>
-                       <tbody className="divide-y divide-slate-100">
-                           {result?.breakdown?.map((item: any, idx: number) => (
-                               <tr key={idx} className={item.isBold ? "bg-slate-50 font-semibold" : ""}>
-                                   <td className="px-3 py-2">
-                                       <div className="text-slate-700">{item.label}</div>
-                                       {item.details && <div className="text-xs text-slate-400 font-normal">{item.details}</div>}
-                                   </td>
-                                   <td className="px-3 py-2 text-right text-slate-800">
-                                       € {item.value.toLocaleString('it-IT', {maximumFractionDigits: 0})}
-                                   </td>
-                               </tr>
-                           ))}
-                       </tbody>
-                       <tfoot className="bg-slate-100 font-bold text-slate-800">
-                           <tr>
-                               <td className="px-3 py-2">Totale Costi Vivi</td>
-                               <td className="px-3 py-2 text-right">€ {result?.totalCost?.toLocaleString('it-IT', {maximumFractionDigits: 0})}</td>
-                           </tr>
-                       </tfoot>
-                   </table>
+          {result && (
+            <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden sticky top-6">
+              <div className="bg-slate-900 text-white p-6">
+                <div className="flex justify-between items-start">
+                   <div>
+                       <p className="text-slate-400 text-sm uppercase tracking-wider font-semibold mb-1">Totale Preventivato</p>
+                       <h2 className="text-4xl font-bold">€ {result.sellPrice.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h2>
+                       <p className="text-slate-400 text-sm mt-1">+ IVA</p>
+                   </div>
+                   <div className="text-right">
+                       <div className="inline-block bg-white/10 px-3 py-1 rounded text-sm font-medium">
+                          Costo Vivo: € {result.totalCost.toLocaleString('it-IT', { maximumFractionDigits: 0 })}
+                       </div>
+                   </div>
                 </div>
+              </div>
+
+              <div className="p-6 space-y-6">
                 
-                <div className="text-xs text-slate-400 flex justify-between px-2">
-                    <span>Peso Totale: {result?.totalWeight?.toLocaleString()} kg</span>
-                    <span>Trasporto: {result?.transportMethod}</span>
+                {/* Transport Method Summary */}
+                <div className="flex items-center gap-3 p-3 bg-blue-50 text-blue-800 rounded-lg">
+                    <Truck size={20} />
+                    <div>
+                        <p className="text-xs font-bold uppercase opacity-70">Logistica Trasporto</p>
+                        <p className="font-medium">{result.transportMethod}</p>
+                    </div>
+                </div>
+
+                {/* DETAILED BREAKDOWN TABLE */}
+                <div>
+                    <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3 border-b border-slate-100 pb-2">
+                        Dettaglio Costi
+                    </h3>
+                    <div className="space-y-3">
+                        {result.breakdown.map((item: any, idx: number) => (
+                            <div key={idx} className={`flex justify-between items-start text-sm ${item.isBold ? 'font-bold text-slate-900' : 'text-slate-600'}`}>
+                                <div>
+                                    <span>{item.label}</span>
+                                    {item.details && <span className="block text-xs text-slate-400 font-normal">{item.details}</span>}
+                                </div>
+                                <span>€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            </div>
+                        ))}
+                    </div>
+                    
+                    {/* Summary Totals */}
+                    <div className="mt-6 pt-4 border-t border-slate-200 space-y-2">
+                        <div className="flex justify-between text-slate-700">
+                            <span>Totale Installazione</span>
+                            <span className="font-semibold">€ {result.installationCost.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        <div className="flex justify-between text-slate-700">
+                            <span>Totale Trasporto</span>
+                            <span className="font-semibold">€ {result.transportCost.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                         {result.discountAppliedPerc > 0 && (
+                            <div className="flex justify-between text-green-600 font-medium text-sm pt-2">
+                                <span>Sconto Qtà Applicato</span>
+                                <span>{result.discountAppliedPerc}%</span>
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 <button 
                   onClick={handlePrint}
-                  className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors mt-4"
+                  className="w-full py-3 border-2 border-slate-900 text-slate-900 rounded-lg font-bold hover:bg-slate-900 hover:text-white transition-all flex items-center justify-center gap-2 no-print"
                 >
-                  <FileDown size={20} />
-                  Stampa / Salva PDF
+                  <FileDown size={20} /> Scarica PDF / Stampa
                 </button>
-             </div>
-          </div>
-        </div>
-      </div>
-      
-      {/* PRINT LAYOUT (Visible only on Print) */}
-      <div className="print-only hidden p-8 bg-white text-black h-screen">
-        <div className="flex justify-between items-start mb-8 border-b-2 border-slate-900 pb-6">
-           <div>
-               <h1 className="text-4xl font-bold text-slate-900 tracking-tight">Pergosolar</h1>
-               <p className="text-slate-500 mt-1 uppercase tracking-wide text-sm font-semibold">Preventivo Tecnico</p>
-           </div>
-           <div className="text-right">
-               <p className="text-sm text-slate-600">Data Inizio Lavori</p>
-               <p className="font-bold text-lg">{new Date(inputs.startDate).toLocaleDateString('it-IT')}</p>
-           </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-12 mb-12">
-           <div className="space-y-2">
-             <h3 className="font-bold text-slate-800 uppercase text-xs tracking-wider border-b border-slate-200 pb-1 mb-3">Dettagli Cantiere</h3>
-             <div className="flex justify-between"><span className="text-slate-600">Destinazione:</span> <span className="font-medium">{inputs.indirizzoCompleto}</span></div>
-             <div className="flex justify-between"><span className="text-slate-600">Distanza Sede:</span> <span className="font-medium">{inputs.logistics.distanceKm} km</span></div>
-           </div>
-           
-           <div className="space-y-2">
-             <h3 className="font-bold text-slate-800 uppercase text-xs tracking-wider border-b border-slate-200 pb-1 mb-3">Configurazione</h3>
-             {inputs.serviceType === ServiceType.INSTALLAZIONE_COMPLETA ? (
-               <>
-                <div className="flex justify-between"><span className="text-slate-600">Modello:</span> <span className="font-medium">{inputs.modello}</span></div>
-                <div className="flex justify-between"><span className="text-slate-600">Posti Auto:</span> <span className="font-medium">{inputs.postiAuto}</span></div>
-                <div className="flex justify-between"><span className="text-slate-600">Config:</span> <span className="font-medium">
-                   {[
-                     inputs.optInstallazioneTelo && 'Telo',
-                     inputs.optPannelliFotovoltaici && 'PV',
-                     inputs.optIlluminazioneLED && 'LED',
-                     inputs.optPannelliCoibentati && 'Coibentato',
-                     inputs.optZavorre && 'Zavorre'
-                   ].filter(Boolean).join(', ')}
-                </span></div>
-               </>
-             ) : (
-                <div className="flex justify-between"><span className="text-slate-600">Servizio:</span> <span className="font-medium">Assistenza Tecnica</span></div>
-             )}
-           </div>
-        </div>
-
-        <div className="mb-12">
-          <h3 className="font-bold text-slate-800 uppercase text-xs tracking-wider border-b-2 border-slate-900 pb-2 mb-4">Riepilogo Costi</h3>
-          <table className="w-full text-sm">
-             <thead>
-                <tr className="text-left text-slate-500 border-b border-slate-200">
-                   <th className="pb-2 font-medium">Descrizione</th>
-                   <th className="pb-2 font-medium text-right">Valore</th>
-                </tr>
-             </thead>
-             <tbody className="divide-y divide-slate-100">
-                {result?.breakdown?.map((item: any, idx: number) => (
-                    <tr key={idx} className="py-2">
-                        <td className="py-2 text-slate-700">{item.label}</td>
-                        <td className="py-2 text-right font-medium">€ {item.value.toLocaleString('it-IT', {maximumFractionDigits: 0})}</td>
-                    </tr>
-                ))}
-             </tbody>
-             <tfoot>
-                <tr className="border-t-2 border-slate-900 text-lg">
-                   <td className="pt-4 font-bold">Totale Stimato (IVA Esclusa)</td>
-                   <td className="pt-4 font-bold text-right">€ {result?.sellPrice?.toLocaleString('it-IT', {minimumFractionDigits: 2})}</td>
-                </tr>
-             </tfoot>
-          </table>
-        </div>
-
-        <div className="text-xs text-slate-400 mt-auto pt-8 border-t border-slate-100">
-           <p>Preventivo generato automaticamente da OptiCost. I valori sono indicativi e soggetti a conferma.</p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

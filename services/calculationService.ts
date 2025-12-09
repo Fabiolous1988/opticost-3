@@ -67,7 +67,7 @@ export const calculateQuote = (
        if (distanceKm > vars.soglia_distanza_trasferta_km || inputs.assistenzaGiorni > 1) {
            const actualNights = Math.max(0, inputs.assistenzaGiorni - 1);
            hotelTotal = actualNights * numTechs * hotelCostPerNight;
-           breakdown.push({ label: 'Hotel & Alloggio', value: hotelTotal, details: `${actualNights} notti x ${numTechs} pers.` });
+           if (hotelTotal > 0) breakdown.push({ label: 'Hotel & Alloggio', value: hotelTotal, details: `${actualNights} notti x ${numTechs} pers.` });
        }
        
        // Diaria for public transport travel
@@ -77,7 +77,7 @@ export const calculateQuote = (
        
        travelCost = ticketCost + hotelTotal + perDiemCost;
     } else {
-        // Company Vehicle (Furgone) Logic - Matching Installazione Completa
+        // Company Vehicle (Furgone) Logic - STRICTLY MATCHING Installazione Completa
         const tripDistance = distanceKm * 2; // A/R
         let totalKm = tripDistance;
         const isTrasferta = distanceKm > vars.soglia_distanza_trasferta_km;

@@ -3,6 +3,7 @@ import Calculator from './components/Calculator';
 import Settings from './components/Settings';
 import { GlobalVariables, TransportRate, ModelData, BallastData } from './types';
 import { fetchGlobalVariables, fetchTransportRates, fetchModelsAndBallasts } from './services/dataService';
+import { KeyRound } from 'lucide-react';
 
 const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
@@ -11,6 +12,8 @@ const App: React.FC = () => {
   const [models, setModels] = useState<ModelData[]>([]);
   const [ballasts, setBallasts] = useState<BallastData[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [apiKey, setApiKey] = useState<string>('');
+  const [inputKey, setInputKey] = useState<string>('');
 
   useEffect(() => {
     const initData = async () => {
@@ -27,6 +30,43 @@ const App: React.FC = () => {
     };
     initData();
   }, []);
+
+  const handleSetKey = () => {
+    if (inputKey.trim().length > 10) {
+      setApiKey(inputKey.trim());
+    }
+  };
+
+  if (!apiKey) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <div className="bg-white rounded-xl shadow-2xl p-8 max-w-md w-full text-center">
+            <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6">
+                <KeyRound className="text-blue-600" size={32} />
+            </div>
+            <h1 className="text-2xl font-bold text-slate-800 mb-2">Pergosolar OptiCost</h1>
+            <p className="text-slate-500 mb-6">Inserisci la tua Gemini API Key per accedere al preventivatore.</p>
+            
+            <input 
+              type="password" 
+              placeholder="Incolla qui la tua API Key..."
+              value={inputKey}
+              onChange={(e) => setInputKey(e.target.value)}
+              className="w-full border border-slate-300 rounded-lg px-4 py-3 mb-4 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            />
+            
+            <button 
+              onClick={handleSetKey}
+              disabled={inputKey.length < 10}
+              className="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 disabled:bg-slate-300 transition-colors"
+            >
+              Accedi al Software
+            </button>
+            <p className="text-xs text-slate-400 mt-4">La chiave non viene salvata permanentemente per sicurezza.</p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading || !globalVars) {
     return (
@@ -47,6 +87,7 @@ const App: React.FC = () => {
         models={models}
         ballasts={ballasts}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        apiKey={apiKey}
       />
       
       <Settings 
