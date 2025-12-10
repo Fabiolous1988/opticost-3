@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { LogisticsData } from '../types';
 
 const AI_ORIGIN_ADDRESS = "Via Disciplina 11, 37036 San Martino Buon Albergo, Verona, Italy";
@@ -6,21 +6,62 @@ const AI_ORIGIN_ADDRESS = "Via Disciplina 11, 37036 San Martino Buon Albergo, Ve
 // Helper to extract JSON from Markdown or text
 const cleanJson = (text: string): string => {
   if (!text) return "{}";
-  // Finds the first occurrence of { ... } including nested braces if possible.
-  // We match from the first { to the last } to handle code blocks like ```json ... ```
-  const match = text.match(/\{[\s\S]*\}/);
-  return match ? match[0] : text;
+  const firstOpen = text.indexOf('{');
+  const lastClose = text.lastIndexOf('}');
+  
+  if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+      return text.substring(firstOpen, lastClose + 1);
+  }
+  return text;
 };
 
+// Helper to parse error messages
+const parseErrorMessage = (error: any): string => {
+    let msg = error?.message || String(error);
+    
+    // Check if message is a JSON string
+    try {
+        if (msg.startsWith('{')) {
+            const parsed = JSON.parse(msg);
+            if (parsed.error?.message) {
+                msg = parsed.error.message;
+            }
+        }
+    } catch (e) {
+        // ignore json parse error
+    }
+
+    if (msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("quota")) {
+        return "Quota API esaurita (Errore 429). Hai raggiunto il limite del piano gratuito di Google Gemini. Riprova tra qualche minuto o usa una chiave a pagamento.";
+    }
+    
+    if (msg.includes("403") || msg.includes("API key")) {
+        return "Chiave API non valida o con restrizioni. Controlla la chiave e riprova.";
+    }
+
+    if (msg.includes("503") || msg.includes("overloaded")) {
+        return "Il modello AI è momentaneamente sovraccarico (Errore 503). Riprova tra poco.";
+    }
+
+    return msg;
+};
+
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export const fetchLogisticsFromAI = async (destination: string, apiKey: string): Promise<LogisticsData> => {
-  // STRICT CHECK: If no key is passed, we cannot proceed.
   if (!apiKey) {
-    console.warn("No API Key provided to fetchLogisticsFromAI");
-    return createEmptyLogistics(false);
+    throw new Error("Chiave API mancante. Inseriscila nella schermata iniziale.");
   }
 
   const ai = new GoogleGenAI({ apiKey });
   const modelName = 'gemini-2.5-flash';
+
+  const safetySettings = [
+    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+    { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+    { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  ];
 
   const prompt = `
     I am a logistics planner for a company based in Verona (Origin: ${AI_ORIGIN_ADDRESS}).
@@ -46,87 +87,23 @@ export const fetchLogisticsFromAI = async (destination: string, apiKey: string):
     }
   `;
 
-  // --- ATTEMPT 1: WITH GOOGLE SEARCH TOOLS ---
-  try {
-    console.log("AI Attempt 1: Using Google Search Tool...");
-    const response = await ai.models.generateContent({
-      model: modelName,
-      contents: prompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-      }
-    });
+  // --- ATTEMPT 1: WITH TOOLS (Search) ---
+  // Retry loop for overloaded/503 errors
+  let lastError: any = null;
+  
+  for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        console.log(`AI Attempt 1 (Try ${attempt}/3): Using Google Search Tool...`);
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            tools: [{ googleSearch: {} }],
+            safetySettings: safetySettings
+          }
+        });
 
-    const text = response.text;
-    if (!text) throw new Error("Empty response text from AI (Tool)");
+        const text = response.text;
+        if (!text) throw new Error("Risposta AI vuota (Tentativo 1)");
 
-    return parseResponse(text);
-
-  } catch (error) {
-    console.warn("AI Attempt 1 (Tools) Failed:", error);
-    
-    // --- ATTEMPT 2: FALLBACK (PURE ESTIMATION) ---
-    try {
-      console.log("AI Attempt 2: Fallback to Estimation (No Tools)...");
-      const fallbackPrompt = prompt + `\n\nIMPORTANT: Since external search is unavailable, please ESTIMATE these values based on your internal knowledge of geography and pricing. Be realistic.`;
-      
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents: fallbackPrompt,
-        // No tools config here
-      });
-
-      const text = response.text;
-      if (!text) throw new Error("Empty response text from AI (Fallback)");
-
-      return parseResponse(text);
-
-    } catch (fallbackError) {
-      console.error("AI Attempt 2 (Fallback) Failed:", fallbackError);
-      return createEmptyLogistics(false);
-    }
-  }
-};
-
-// Helper to parse the JSON response
-const parseResponse = (text: string): LogisticsData => {
-  try {
-    const jsonStr = cleanJson(text);
-    const data = JSON.parse(jsonStr);
-
-    // Determine recommended mode
-    let recommended: 'train' | 'plane' | 'none' = 'none';
-    if (data.trainPrice > 0 || data.planePrice > 0) {
-        if (data.planePrice > 0 && data.planePrice < data.trainPrice) {
-            recommended = 'plane';
-        } else if (data.trainPrice > 0) {
-            recommended = 'train';
-        }
-    }
-
-    return {
-      distanceKm: typeof data.distanceKm === 'number' ? data.distanceKm : 0,
-      durationMinutes: typeof data.durationMinutes === 'number' ? data.durationMinutes : 0,
-      avgHotelPrice: (typeof data.avgHotelPrice === 'number' && data.avgHotelPrice > 0) ? data.avgHotelPrice : 110, 
-      trainPrice: typeof data.trainPrice === 'number' ? data.trainPrice : 0,
-      planePrice: typeof data.planePrice === 'number' ? data.planePrice : 0,
-      lastMilePrice: typeof data.lastMilePrice === 'number' ? data.lastMilePrice : 20,
-      recommendedMode: recommended,
-      fetched: true
-    };
-  } catch (e) {
-    console.error("JSON Parse Error:", e, "Input text:", text);
-    throw e;
-  }
-};
-
-const createEmptyLogistics = (fetched: boolean): LogisticsData => ({
-  distanceKm: 0,
-  durationMinutes: 0,
-  avgHotelPrice: 110,
-  trainPrice: 0,
-  planePrice: 0,
-  lastMilePrice: 0,
-  recommendedMode: 'none',
-  fetched: fetched
-});
+        return parseResponse

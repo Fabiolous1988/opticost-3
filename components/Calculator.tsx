@@ -80,14 +80,10 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
     setAnalysisError(null);
     try {
         const logistics = await fetchLogisticsFromAI(inputs.indirizzoCompleto, apiKey);
-        if (logistics.fetched) {
-             setInputs(prev => ({ ...prev, logistics }));
-        } else {
-             setAnalysisError("Impossibile recuperare dati logistici dall'IA. Verifica l'indirizzo o la chiave API.");
-        }
-    } catch (e) {
+        setInputs(prev => ({ ...prev, logistics }));
+    } catch (e: any) {
         console.error("Analysis failed", e);
-        setAnalysisError("Errore durante l'analisi. Riprova.");
+        setAnalysisError(e.message || "Errore sconosciuto durante l'analisi.");
     } finally {
         setAnalyzing(false);
     }
@@ -203,9 +199,9 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
 
             {/* Analysis Error Message */}
             {analysisError && (
-              <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg flex items-center gap-2 text-sm">
-                  <AlertCircle size={16} />
-                  {analysisError}
+              <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg flex items-start gap-2 text-sm">
+                  <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                  <span className="break-words">{analysisError}</span>
               </div>
             )}
 
