@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Calculator as CalcIcon, Truck, Users, Hammer, FileDown, Search, MapPin, Building, TrainFront, Box, Plane, CreditCard, Calendar, Weight, AlertCircle } from 'lucide-react';
-import { GlobalVariables, TransportRate, QuoteInputs, ServiceType, ModelData, BallastData } from '../types';
+import { Settings, Calculator as CalcIcon, Truck, Users, Hammer, FileDown, Search, MapPin, Building, TrainFront, Box, Plane, CreditCard, Calendar, Weight, AlertCircle, Anchor, RotateCcw, KeyRound, Plus, Trash2 } from 'lucide-react';
+import { GlobalVariables, TransportRate, QuoteInputs, ServiceType, ModelData, BallastData, CustomExtraCost } from '../types';
 import { calculateQuote } from '../services/calculationService';
 import { fetchLogisticsFromAI } from '../services/aiService';
 
@@ -8,14 +8,15 @@ interface Props {
   globalVars: GlobalVariables;
   transportRates: TransportRate[];
   onOpenSettings: () => void;
+  onOpenApiKeySettings: () => void;
   models: ModelData[];
   ballasts: BallastData[];
   apiKey: string;
 }
 
-const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSettings, models, ballasts, apiKey }) => {
+const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSettings, onOpenApiKeySettings, models, ballasts, apiKey }) => {
   
-  const [inputs, setInputs] = useState<QuoteInputs>({
+  const getInitialState = (): QuoteInputs => ({
     serviceType: ServiceType.INSTALLAZIONE_COMPLETA,
     startDate: new Date().toISOString().split('T')[0],
     indirizzoCompleto: '',
@@ -29,6 +30,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
         recommendedMode: 'none',
         fetched: false
     },
+    extraCosts: [],
     modello: models.length > 0 ? models[0].nome : '',
     postiAuto: 2,
     useInternalTechs: true,
@@ -37,21 +39,28 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
     numExternalTechs: 2,
     assistenzaGiorni: 1,
     assistenzaTecniciCount: 1,
-    optInstallazioneTelo: true,
+    optInstallazioneTelo: false,
     optPannelliFotovoltaici: false,
     optIlluminazioneLED: false,
     optPannelliCoibentati: false,
-    clientHasForklift: true, // Default: Client HAS forklift. If false -> Rent
+    clientHasForklift: true, 
     usePublicTransport: false,
+    publicTransportMode: 'train',
     optZavorre: false,
     tipoZavorraNome: ballasts.length > 0 ? ballasts[0].nome : ''
   });
 
+  const [inputs, setInputs] = useState<QuoteInputs>(getInitialState());
   const [result, setResult] = useState<any>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
 
+  // New Custom Cost Input State
+  const [newExtraLabel, setNewExtraLabel] = useState('');
+  const [newExtraValue, setNewExtraValue] = useState('');
+
   useEffect(() => {
+    // Only set defaults on mount if they are empty, but don't overwrite user changes
     if (models.length > 0 && !inputs.modello) {
       setInputs(prev => ({ ...prev, modello: models[0].nome }));
     }
@@ -74,19 +83,67 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
     setInputs(prev => ({ ...prev, [field]: value }));
   };
 
+  const handleReset = () => {
+      if (window.confirm("Sei sicuro di voler azzerare tutti i campi e iniziare un nuovo preventivo?")) {
+        const initialState = getInitialState();
+        // Ensure we preserve model/ballast defaults if loaded
+        if (models.length > 0) initialState.modello = models[0].nome;
+        if (ballasts.length > 0) initialState.tipoZavorraNome = ballasts[0].nome;
+        
+        setInputs(initialState);
+        setResult(null);
+        setAnalysisError(null);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+  };
+
   const handleAnalyzeAddress = async () => {
     if (!inputs.indirizzoCompleto) return;
     setAnalyzing(true);
     setAnalysisError(null);
     try {
-        const logistics = await fetchLogisticsFromAI(inputs.indirizzoCompleto, apiKey);
-        setInputs(prev => ({ ...prev, logistics }));
+        // Estimate duration based on current inputs (default 1 day or calculate)
+        // We do a rough pass first, calculateQuote will be more accurate later but for AI lookup we need an estimate
+        const estimatedDays = inputs.serviceType === ServiceType.ASSISTENZA ? inputs.assistenzaGiorni : 5;
+        
+        const logistics = await fetchLogisticsFromAI(inputs.indirizzoCompleto, apiKey, inputs.startDate, estimatedDays);
+        setInputs(prev => ({ 
+            ...prev, 
+            logistics,
+            publicTransportMode: logistics.recommendedMode === 'plane' ? 'plane' : 'train'
+        }));
     } catch (e: any) {
         console.error("Analysis failed", e);
         setAnalysisError(e.message || "Errore sconosciuto durante l'analisi.");
     } finally {
         setAnalyzing(false);
     }
+  };
+
+  const addExtraCost = () => {
+      if (newExtraLabel && newExtraValue) {
+          const val = parseFloat(newExtraValue);
+          if (!isNaN(val)) {
+              const newItem: CustomExtraCost = {
+                  id: Date.now().toString(),
+                  label: newExtraLabel,
+                  value: val
+              };
+              setInputs(prev => ({
+                  ...prev,
+                  extraCosts: [...prev.extraCosts, newItem]
+              }));
+              setNewExtraLabel('');
+              setNewExtraValue('');
+          }
+      }
+  };
+
+  const removeExtraCost = (id: string) => {
+      setInputs(prev => ({
+          ...prev,
+          extraCosts: prev.extraCosts.filter(item => item.id !== id)
+      }));
   };
 
   const handlePrint = () => {
@@ -109,13 +166,29 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
           </h1>
           <p className="text-slate-500">Pergosolar Internal Tool</p>
         </div>
-        <button 
-          onClick={onOpenSettings}
-          className="flex items-center gap-2 px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-        >
-          <Settings size={20} />
-          Impostazioni
-        </button>
+        <div className="flex gap-2">
+            <button 
+                onClick={handleReset}
+                className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100 mr-2"
+              >
+                 <RotateCcw size={20} />
+                 Azzera
+            </button>
+            <button 
+              onClick={onOpenApiKeySettings}
+              className="flex items-center gap-2 px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors border border-transparent hover:border-slate-200"
+            >
+              <KeyRound size={20} />
+              API Key
+            </button>
+            <button 
+              onClick={onOpenSettings}
+              className="flex items-center gap-2 px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors border border-transparent hover:border-slate-200"
+            >
+              <Settings size={20} />
+              Impostazioni
+            </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -205,7 +278,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
               </div>
             )}
 
-            {/* Transport Mode Toggle - Moved Here */}
+            {/* Transport Mode Toggle */}
             <div className="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200">
                 <span className="text-sm font-medium text-slate-700">Modalità Viaggio Tecnici:</span>
                 <div className="flex bg-white rounded-lg p-1 border border-slate-200">
@@ -213,7 +286,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                         onClick={() => handleInputChange('usePublicTransport', false)}
                         className={`px-3 py-1 rounded text-sm font-medium transition-all ${!inputs.usePublicTransport ? 'bg-slate-100 shadow-inner text-blue-700' : 'text-slate-500 hover:text-slate-700'}`}
                     >
-                        <div className="flex items-center gap-1"><Truck size={14}/> Furgone</div>
+                        <div className="flex items-center gap-1"><Truck size={14}/> Nostro Mezzo</div>
                     </button>
                     <button 
                         onClick={() => handleInputChange('usePublicTransport', true)}
@@ -224,16 +297,67 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                 </div>
             </div>
 
+             {/* Manual Extra Costs (Dynamic) */}
+             <div>
+               <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-1">
+                  <Anchor size={14} /> Costi Extra (Es. Traghetto, Pedaggi ZTL, etc)
+               </label>
+               
+               {/* List of added extra costs */}
+               {inputs.extraCosts.length > 0 && (
+                   <div className="mb-3 space-y-2">
+                       {inputs.extraCosts.map(item => (
+                           <div key={item.id} className="flex items-center justify-between bg-white border border-slate-200 p-2 rounded text-sm">
+                               <span className="text-slate-700">{item.label}</span>
+                               <div className="flex items-center gap-3">
+                                   <span className="font-semibold">€ {item.value}</span>
+                                   <button onClick={() => removeExtraCost(item.id)} className="text-red-500 hover:text-red-700">
+                                       <Trash2 size={16} />
+                                   </button>
+                               </div>
+                           </div>
+                       ))}
+                   </div>
+               )}
+
+               {/* Add new */}
+               <div className="flex gap-2">
+                   <input 
+                     type="text"
+                     value={newExtraLabel}
+                     onChange={(e) => setNewExtraLabel(e.target.value)}
+                     className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                     placeholder="Descrizione (es. Traghetto)"
+                   />
+                   <div className="relative w-24">
+                       <input 
+                        type="number"
+                        min="0"
+                        value={newExtraValue}
+                        onChange={(e) => setNewExtraValue(e.target.value)}
+                        className="w-full border border-slate-300 rounded-lg px-2 py-2 text-sm"
+                        placeholder="€"
+                        />
+                   </div>
+                   <button 
+                     onClick={addExtraCost}
+                     className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 rounded-lg"
+                   >
+                       <Plus size={20} />
+                   </button>
+               </div>
+            </div>
+
             {/* AI Results Display */}
             {inputs.logistics.fetched && (
                 <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-3 animate-in fade-in duration-500">
                     <div className="grid grid-cols-2 gap-4 text-sm">
                         <div>
-                            <span className="text-slate-500 block">Distanza</span>
+                            <span className="text-slate-500 block">Distanza (Solo Andata)</span>
                             <span className="font-semibold text-slate-800 text-lg">{inputs.logistics.distanceKm} km</span>
                         </div>
                         <div>
-                            <span className="text-slate-500 block">Viaggio Auto</span>
+                            <span className="text-slate-500 block">Viaggio (Solo Andata)</span>
                             <span className="font-semibold text-slate-800 text-lg">{Math.floor(inputs.logistics.durationMinutes / 60)}h {inputs.logistics.durationMinutes % 60}m</span>
                         </div>
                          <div>
@@ -242,23 +366,41 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                         </div>
                     </div>
 
-                    {/* Detailed Public Transport - Only Show if Selected */}
+                    {/* Detailed Public Transport - Selectable */}
                     {inputs.usePublicTransport && (
                       <div className="pt-2 border-t border-slate-200">
-                         <span className="text-slate-500 block text-xs uppercase font-bold tracking-wider mb-2">Opzioni Mezzi Pubblici (A/R per persona)</span>
+                         <span className="text-slate-500 block text-xs uppercase font-bold tracking-wider mb-2">Seleziona Opzione Mezzi (A/R per persona)</span>
                          <div className="grid grid-cols-2 gap-2 text-sm">
-                             <div className={`p-2 rounded border ${inputs.logistics.recommendedMode === 'train' ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-200'}`}>
+                             {/* TRAIN OPTION */}
+                             <div 
+                                onClick={() => handleInputChange('publicTransportMode', 'train')}
+                                className={`p-2 rounded border cursor-pointer transition-all ${
+                                    inputs.publicTransportMode === 'train' 
+                                    ? 'bg-blue-100 border-blue-500 ring-1 ring-blue-500' 
+                                    : 'bg-white border-slate-200 hover:border-blue-300'
+                                }`}
+                             >
                                  <div className="flex items-center gap-1 font-semibold text-slate-700"><TrainFront size={14}/> Treno</div>
-                                 <div className="text-slate-500 text-xs">Verona PN → Dest.</div>
-                                 <div className="font-bold">€ {inputs.logistics.trainPrice || '--'}</div>
+                                 <div className="text-slate-500 text-xs">Verona PN ↔ Dest.</div>
+                                 <div className="font-bold text-lg mt-1">€ {inputs.logistics.trainPrice || '--'}</div>
                              </div>
-                             <div className={`p-2 rounded border ${inputs.logistics.recommendedMode === 'plane' ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-200'}`}>
+
+                             {/* PLANE OPTION */}
+                             <div 
+                                onClick={() => handleInputChange('publicTransportMode', 'plane')}
+                                className={`p-2 rounded border cursor-pointer transition-all ${
+                                    inputs.publicTransportMode === 'plane' 
+                                    ? 'bg-blue-100 border-blue-500 ring-1 ring-blue-500' 
+                                    : 'bg-white border-slate-200 hover:border-blue-300'
+                                }`}
+                             >
                                  <div className="flex items-center gap-1 font-semibold text-slate-700"><Plane size={14}/> Aereo</div>
-                                 <div className="text-slate-500 text-xs">VRN → Aeroporto</div>
-                                 <div className="font-bold">€ {inputs.logistics.planePrice || '--'}</div>
+                                 <div className="text-slate-500 text-xs">VRN ↔ Aeroporto</div>
+                                 <div className="font-bold text-lg mt-1">€ {inputs.logistics.planePrice || '--'}</div>
                              </div>
-                             <div className="col-span-2 text-xs text-slate-500 flex justify-between px-1">
-                                 <span>+ Last Mile (Taxi/Bus):</span>
+
+                             <div className="col-span-2 text-xs text-slate-500 flex justify-between px-1 mt-1">
+                                 <span>+ Last Mile stimato (Taxi/Bus):</span>
                                  <span className="font-semibold">€ {inputs.logistics.lastMilePrice}</span>
                              </div>
                          </div>
@@ -341,7 +483,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                         onChange={(e) => handleInputChange('useInternalTechs', e.target.checked)}
                         className="w-5 h-5 text-blue-600 rounded cursor-pointer"
                       />
-                      <span className="font-medium text-slate-700">Tecnici Interni</span>
+                      <span className="font-medium text-slate-700">Personale Azienda (Interno)</span>
                     </div>
                     {inputs.useInternalTechs && (
                       <input 
@@ -362,7 +504,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                         onChange={(e) => handleInputChange('useExternalTechs', e.target.checked)}
                         className="w-5 h-5 text-blue-600 rounded cursor-pointer"
                       />
-                      <span className="font-medium text-slate-700">Tecnici Esterni</span>
+                      <span className="font-medium text-slate-700">Personale Esterno</span>
                     </div>
                     {inputs.useExternalTechs && (
                       <input 
@@ -496,28 +638,91 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                     <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3 border-b border-slate-100 pb-2">
                         Dettaglio Costi
                     </h3>
-                    <div className="space-y-3">
-                        {result.breakdown.map((item: any, idx: number) => (
-                            <div key={idx} className={`flex justify-between items-start text-sm ${item.isBold ? 'font-bold text-slate-900' : 'text-slate-600'}`}>
-                                <div>
-                                    <span>{item.label}</span>
-                                    {item.details && <span className="block text-xs text-slate-400 font-normal">{item.details}</span>}
-                                </div>
-                                <span>€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    <div className="space-y-4">
+                        
+                        {/* Internal Team Section */}
+                        {result.internalTeamCosts.length > 0 && (
+                            <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                <h4 className="font-bold text-blue-700 text-xs uppercase mb-2">Squadra Interna</h4>
+                                {result.internalTeamCosts.map((item: any, idx: number) => (
+                                    <div key={idx} className="flex justify-between items-start text-sm mb-1 last:mb-0 text-slate-700">
+                                        <div>
+                                            <span className={item.isBold ? 'font-semibold' : ''}>{item.label}</span>
+                                            {item.details && <span className="block text-xs text-slate-400 font-normal">{item.details}</span>}
+                                        </div>
+                                        <span className="font-medium">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                                    </div>
+                                ))}
                             </div>
-                        ))}
+                        )}
+
+                        {/* External Team Section */}
+                        {result.externalTeamCosts.length > 0 && (
+                            <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                <h4 className="font-bold text-orange-700 text-xs uppercase mb-2">Squadra Esterna</h4>
+                                {result.externalTeamCosts.map((item: any, idx: number) => (
+                                    <div key={idx} className="flex justify-between items-start text-sm mb-1 last:mb-0 text-slate-700">
+                                        <div>
+                                            <span className={item.isBold ? 'font-semibold' : ''}>{item.label}</span>
+                                            {item.details && <span className="block text-xs text-slate-400 font-normal">{item.details}</span>}
+                                        </div>
+                                        <span className="font-medium">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* General Logistics & Equipment */}
+                        {result.generalLogisticsCosts.length > 0 && (
+                             <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                <h4 className="font-bold text-slate-700 text-xs uppercase mb-2">Logistica Materiali & Noleggi</h4>
+                                {result.generalLogisticsCosts.map((item: any, idx: number) => (
+                                    <div key={idx} className="flex justify-between items-start text-sm mb-1 last:mb-0 text-slate-700">
+                                        <div>
+                                            <span className={item.isBold ? 'font-semibold' : ''}>{item.label}</span>
+                                            {item.details && <span className="block text-xs text-slate-400 font-normal">{item.details}</span>}
+                                        </div>
+                                        <span className="font-medium">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        
+                        {/* Custom Extra Costs */}
+                        {inputs.extraCosts.length > 0 && (
+                            <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                <h4 className="font-bold text-purple-700 text-xs uppercase mb-2">Costi Extra Personalizzati</h4>
+                                {inputs.extraCosts.map((item) => (
+                                    <div key={item.id} className="flex justify-between items-start text-sm mb-1 last:mb-0 text-slate-700">
+                                        <span>{item.label}</span>
+                                        <span className="font-medium">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                     
                     {/* Summary Totals */}
                     <div className="mt-6 pt-4 border-t border-slate-200 space-y-2">
                         <div className="flex justify-between text-slate-700">
-                            <span>Totale Installazione</span>
-                            <span className="font-semibold">€ {result.installationCost.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                            <span>Totale Installazione (Manodopera + Logistica Tecnici)</span>
+                            <span className="font-semibold">€ {result.installationTotal.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
                         </div>
                         <div className="flex justify-between text-slate-700">
-                            <span>Totale Trasporto</span>
-                            <span className="font-semibold">€ {result.transportCost.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                            <span>Totale Trasporto (Materiali)</span>
+                            <span className="font-semibold">€ {result.transportTotal.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
                         </div>
+                         <div className="flex justify-between text-slate-700">
+                            <span>Totale Noleggi</span>
+                            <span className="font-semibold">€ {result.equipmentTotal.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        {result.extraCostsTotal > 0 && (
+                            <div className="flex justify-between text-slate-700">
+                                <span>Totale Extra</span>
+                                <span className="font-semibold">€ {result.extraCostsTotal.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                            </div>
+                        )}
+
                          {result.discountAppliedPerc > 0 && (
                             <div className="flex justify-between text-green-600 font-medium text-sm pt-2">
                                 <span>Sconto Qtà Applicato</span>

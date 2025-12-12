@@ -3,7 +3,7 @@ import Calculator from './components/Calculator';
 import Settings from './components/Settings';
 import { GlobalVariables, TransportRate, ModelData, BallastData } from './types';
 import { fetchGlobalVariables, fetchTransportRates, fetchModelsAndBallasts } from './services/dataService';
-import { KeyRound } from 'lucide-react';
+import { KeyRound, X, Save, Trash2 } from 'lucide-react';
 
 const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
@@ -12,8 +12,14 @@ const App: React.FC = () => {
   const [models, setModels] = useState<ModelData[]>([]);
   const [ballasts, setBallasts] = useState<BallastData[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [apiKey, setApiKey] = useState<string>('');
+  const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
+  
+  // Initialize from localStorage if available
+  const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem('opticost_api_key') || '');
   const [inputKey, setInputKey] = useState<string>('');
+  
+  // For the modal edit
+  const [editKey, setEditKey] = useState('');
 
   useEffect(() => {
     const initData = async () => {
@@ -31,10 +37,36 @@ const App: React.FC = () => {
     initData();
   }, []);
 
+  useEffect(() => {
+      if (isApiKeyModalOpen) {
+          setEditKey(apiKey);
+      }
+  }, [isApiKeyModalOpen, apiKey]);
+
   const handleSetKey = () => {
-    if (inputKey.trim().length > 10) {
-      setApiKey(inputKey.trim());
+    const cleanKey = inputKey.trim();
+    if (cleanKey.length > 10) {
+      setApiKey(cleanKey);
+      localStorage.setItem('opticost_api_key', cleanKey);
     }
+  };
+
+  const handleUpdateKey = () => {
+      const cleanKey = editKey.trim();
+      if (cleanKey.length > 10) {
+          setApiKey(cleanKey);
+          localStorage.setItem('opticost_api_key', cleanKey);
+          setIsApiKeyModalOpen(false);
+      }
+  };
+
+  const handleClearKey = () => {
+      if(window.confirm("Sei sicuro di voler rimuovere la chiave API? Dovrai reinserirla per usare l'app.")) {
+          setApiKey('');
+          localStorage.removeItem('opticost_api_key');
+          setIsApiKeyModalOpen(false);
+          setInputKey('');
+      }
   };
 
   if (!apiKey) {
@@ -62,7 +94,7 @@ const App: React.FC = () => {
             >
               Accedi al Software
             </button>
-            <p className="text-xs text-slate-400 mt-4">La chiave non viene salvata permanentemente per sicurezza.</p>
+            <p className="text-xs text-slate-400 mt-4">La chiave viene salvata nel browser per i prossimi accessi.</p>
         </div>
       </div>
     );
@@ -87,6 +119,7 @@ const App: React.FC = () => {
         models={models}
         ballasts={ballasts}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenApiKeySettings={() => setIsApiKeyModalOpen(true)}
         apiKey={apiKey}
       />
       
@@ -96,6 +129,43 @@ const App: React.FC = () => {
         variables={globalVars}
         onUpdate={setGlobalVars}
       />
+
+      {/* API Key Modal */}
+      {isApiKeyModalOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-bold text-slate-800">Gestione API Key</h3>
+                    <button onClick={() => setIsApiKeyModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                        <X size={20} />
+                    </button>
+                </div>
+                
+                <p className="text-sm text-slate-600 mb-2">Modifica la chiave API salvata:</p>
+                <input 
+                    type="password" 
+                    value={editKey}
+                    onChange={(e) => setEditKey(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 mb-4 focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-sm"
+                />
+
+                <div className="flex flex-col gap-2">
+                    <button 
+                        onClick={handleUpdateKey}
+                        className="w-full bg-blue-600 text-white font-semibold py-2 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2"
+                    >
+                        <Save size={18} /> Salva Nuova Chiave
+                    </button>
+                    <button 
+                        onClick={handleClearKey}
+                        className="w-full bg-white border border-red-200 text-red-600 font-semibold py-2 rounded-lg hover:bg-red-50 flex items-center justify-center gap-2"
+                    >
+                        <Trash2 size={18} /> Rimuovi Chiave (Logout)
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
     </div>
   );
 };

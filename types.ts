@@ -19,7 +19,7 @@ export interface GlobalVariables {
   margine_percentuale_installazione: number;
   costo_mezzo_sollevamento_base: number; // Legacy
   costo_noleggio_muletto_base: number; // 700
-  costo_noleggio_muletto_extra: number; // 120
+  costo_noleggio_muletto_extra: number; // 100
   hourly_discounts: DiscountTier[];
 }
 
@@ -58,9 +58,17 @@ export interface LogisticsData {
   trainPrice: number;
   planePrice: number;
   lastMilePrice: number;
+  
+  // AI recommendation (just for highlighting)
   recommendedMode: 'train' | 'plane' | 'none';
 
   fetched: boolean;
+}
+
+export interface CustomExtraCost {
+  id: string;
+  label: string;
+  value: number;
 }
 
 export interface QuoteInputs {
@@ -72,6 +80,9 @@ export interface QuoteInputs {
   // Location
   indirizzoCompleto: string;
   logistics: LogisticsData;
+  
+  // Dynamic Extra Costs
+  extraCosts: CustomExtraCost[];
 
   // Model & Config
   modello: string;
@@ -96,6 +107,7 @@ export interface QuoteInputs {
   // Logistics Options
   clientHasForklift: boolean; // "Disponibilità Muletto"
   usePublicTransport: boolean; // "Mezzi Pubblici"
+  publicTransportMode: 'train' | 'plane'; // Selected specific mode
   
   // Ballasts
   optZavorre: boolean;
@@ -110,22 +122,26 @@ export interface DetailedCostBreakdown {
 }
 
 export interface CalculationResult {
-  totalCost: number;
+  totalCost: number; // Totalone (Installazione + Trasporto + Noleggi + Extra)
   sellPrice: number;
-  installationCost: number;
-  transportCost: number;
+  
+  // Subtotals
+  installationTotal: number;
+  transportTotal: number;
+  equipmentTotal: number;
+  extraCostsTotal: number;
+
   transportMethod: string;
   totalWeight: number;
   totalHours: number;
   totalDays: number;
-  travelCost: number;
-  perDiemCost: number;
-  laborCost: number;
-  equipmentCost: number;
+  
+  // Structured Breakdown for UI
+  internalTeamCosts: DetailedCostBreakdown[];
+  externalTeamCosts: DetailedCostBreakdown[];
+  generalLogisticsCosts: DetailedCostBreakdown[]; // For material transport etc
+  
   numZavorre: number;
   weightZavorre: number;
   discountAppliedPerc: number;
-  
-  // Detailed breakdown for report
-  breakdown: DetailedCostBreakdown[];
 }

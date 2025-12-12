@@ -49,7 +49,7 @@ const parseErrorMessage = (error: any): string => {
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-export const fetchLogisticsFromAI = async (destination: string, apiKey: string): Promise<LogisticsData> => {
+export const fetchLogisticsFromAI = async (destination: string, apiKey: string, startDate?: string, durationDays: number = 1): Promise<LogisticsData> => {
   if (!apiKey) {
     throw new Error("Chiave API mancante. Inseriscila nella schermata iniziale.");
   }
@@ -64,14 +64,23 @@ export const fetchLogisticsFromAI = async (destination: string, apiKey: string):
     { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
   ];
 
+  let dateInfo = "";
+  if (startDate) {
+      const start = new Date(startDate);
+      const end = new Date(start);
+      end.setDate(end.getDate() + durationDays);
+      dateInfo = `Dates: Departure ${startDate}, Return ${end.toISOString().split('T')[0]}.`;
+  }
+
   const promptTools = `
     You are a logistics planner. Origin: ${AI_ORIGIN_ADDRESS}. Destination: ${destination}.
+    ${dateInfo}
 
     Task: Search the web to find real-time logistics data.
     1. Exact driving distance (KM) and duration.
     2. Average 3-star hotel price per night in destination (single room).
-    3. Round Trip (Andata/Ritorno) cost per person for Train (Verona PN -> Dest) and Plane (Verona VRN -> Dest).
-    4. Last mile cost (Taxi/Bus).
+    3. Round Trip (Andata/Ritorno) cost per person for Train (Verona PN -> Dest) and Plane (Verona VRN -> Dest). If dates are provided, look for prices on those specific days.
+    4. Last mile cost (Taxi/Bus) from station/airport to site.
 
     Return JSON:
     {
@@ -85,19 +94,17 @@ export const fetchLogisticsFromAI = async (destination: string, apiKey: string):
     }
   `;
 
-  // Model Rotation Strategy: Try most capable first, fallback to faster/different load balancers if overloaded.
-  // ALWAYS use tools. NEVER estimate.
+  // Model Rotation Strategy
   const modelsToTry = [
-    'gemini-1.5-pro',     // Attempt 1: Best reasoning, usually stable on paid
-    'gemini-2.5-flash',   // Attempt 2: Newest flash
-    'gemini-1.5-flash'    // Attempt 3: Older flash (different load balancer)
+    'gemini-3-pro-preview',
+    'gemini-2.5-flash',
   ];
 
   let lastError: any = null;
 
   for (let i = 0; i < modelsToTry.length; i++) {
     const currentModel = modelsToTry[i];
-    console.log(`Logistics Attempt ${i + 1}/${modelsToTry.length} using ${currentModel} with Google Search...`);
+    console.log(`Logistics Attempt ${i + 1}/${modelsToTry.length} using ${currentModel}...`);
 
     try {
         const response = await ai.models.generateContent({
@@ -134,20 +141,15 @@ export const fetchLogisticsFromAI = async (destination: string, apiKey: string):
         lastError = error;
         
         const errMsg = String(error);
-        
-        // If Auth error (403/Key), stop immediately. Do not rotate.
         if (errMsg.includes("403") || errMsg.includes("API key")) {
             throw new Error(parseErrorMessage(error));
         }
 
-        // If it's the last attempt, don't wait, just throw
         if (i < modelsToTry.length - 1) {
-             // Wait 2s before trying next model
              await wait(2000);
         }
     }
   }
 
-  // If we reach here, all models failed
   throw new Error(parseErrorMessage(lastError));
 };

@@ -45,21 +45,22 @@ export const fetchGlobalVariables = async (): Promise<GlobalVariables> => {
     const text = await response.text();
     const lines = text.split('\n');
     
+    // DEFAULT FALLBACK VALUES
     const vars: GlobalVariables = {
       soglia_distanza_trasferta_km: 150,
       diaria_squadra_interna: 50,
       soglia_minima_ore_lavoro_utili: 2,
-      ore_lavoro_giornaliere_standard: 8, // Fixed to 8 as requested
+      ore_lavoro_giornaliere_standard: 8, 
       km_per_litro_furgone: 11,
       costo_medio_gasolio_euro_litro: 1.8,
       costo_usura_mezzo_euro_km: 0.037,
-      costo_orario_tecnico_interno: 25,
+      costo_orario_tecnico_interno: 17.50, // Updated request
       costo_orario_squadra_esterna: 26.5,
       diaria_squadra_esterna: 70,
       margine_percentuale_installazione: 25,
       costo_mezzo_sollevamento_base: 1000,
       costo_noleggio_muletto_base: 700,
-      costo_noleggio_muletto_extra: 120,
+      costo_noleggio_muletto_extra: 100, // Updated request
       hourly_discounts: []
     };
 
@@ -79,8 +80,11 @@ export const fetchGlobalVariables = async (): Promise<GlobalVariables> => {
       if (key.includes('costo_gasolio')) vars.costo_medio_gasolio_euro_litro = numVal;
       if (key.includes('usura')) vars.costo_usura_mezzo_euro_km = numVal;
       if (key.includes('orario_esterna')) vars.costo_orario_squadra_esterna = numVal;
+      if (key.includes('orario_interna') || key.includes('tecnico_interno')) vars.costo_orario_tecnico_interno = numVal;
       if (key.includes('diaria_esterna')) vars.diaria_squadra_esterna = numVal;
       if (key.includes('margine')) vars.margine_percentuale_installazione = numVal;
+      if (key.includes('muletto_extra')) vars.costo_noleggio_muletto_extra = numVal;
+      if (key.includes('muletto_base')) vars.costo_noleggio_muletto_base = numVal;
       
       // Discount Parsing (e.g. "sconto ore per >150 posti auto (%)")
       if (key.includes('sconto ore') && key.includes('posti')) {
@@ -109,13 +113,13 @@ export const fetchGlobalVariables = async (): Promise<GlobalVariables> => {
       km_per_litro_furgone: 11,
       costo_medio_gasolio_euro_litro: 1.85,
       costo_usura_mezzo_euro_km: 0.037,
-      costo_orario_tecnico_interno: 30,
+      costo_orario_tecnico_interno: 17.50,
       costo_orario_squadra_esterna: 26.5,
       diaria_squadra_esterna: 70,
       margine_percentuale_installazione: 25,
       costo_mezzo_sollevamento_base: 1000,
       costo_noleggio_muletto_base: 700,
-      costo_noleggio_muletto_extra: 120,
+      costo_noleggio_muletto_extra: 100,
       hourly_discounts: []
     };
   }
