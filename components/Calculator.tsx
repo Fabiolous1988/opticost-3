@@ -41,11 +41,17 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
         indirizzoCompleto: '',
         logistics: {
             distanceKm: 0,
-            durationMinutes: 0,
+            driveDurationMinutes: 0,
             avgHotelPrice: 0,
             trainPrice: 0,
+            trainDurationMinutes: 0,
             planePrice: 0,
+            planeDurationMinutes: 0,
             lastMilePrice: 0,
+            lastMileDurationMinutes: 30,
+            ferryCostVan: 0,
+            ferryCostTruck: 0,
+            isIsland: false,
             recommendedMode: 'none',
             fetched: false
         },
@@ -122,8 +128,6 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
     setAnalyzing(true);
     setAnalysisError(null);
     try {
-        // Estimate duration based on current inputs (default 1 day or calculate)
-        // We do a rough pass first, calculateQuote will be more accurate later but for AI lookup we need an estimate
         const estimatedDays = inputs.serviceType === ServiceType.ASSISTENZA ? inputs.assistenzaGiorni : 5;
         
         const logistics = await fetchLogisticsFromAI(inputs.indirizzoCompleto, apiKey, inputs.startDate, estimatedDays);
@@ -173,6 +177,36 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
   const currentBallast = ballasts.find(b => b.nome === inputs.tipoZavorraNome);
   const calculatedBallasts = inputs.optZavorre ? (1 + Math.ceil(inputs.postiAuto / 2)) : 0;
   const calculatedBallastWeight = currentBallast ? (calculatedBallasts * currentBallast.peso_kg) : 0;
+
+  // Formatting helpers
+  const formatSplitPrice = (total: number) => {
+      const half = total / 2;
+      return `(€${half.toFixed(0)} + €${half.toFixed(0)} = €${total})`;
+  };
+
+  const getDurationDisplay = () => {
+      if (!inputs.logistics.fetched) return '--';
+      
+      let minutes = inputs.logistics.driveDurationMinutes;
+      let label = "Guida";
+
+      if (inputs.usePublicTransport) {
+          if (inputs.publicTransportMode === 'plane') {
+              minutes = inputs.logistics.planeDurationMinutes;
+              label = "Volo";
+          } else {
+              minutes = inputs.logistics.trainDurationMinutes;
+              label = "Treno";
+          }
+          // Add last mile
+          minutes += inputs.logistics.lastMileDurationMinutes;
+          label += " + Last Mile";
+      }
+
+      const h = Math.floor(minutes / 60);
+      const m = minutes % 60;
+      return `${label}: ${h}h ${m}m`;
+  };
 
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-6">
@@ -309,7 +343,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
             <div className="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200">
                 <span className="text-sm font-medium text-slate-700 flex items-center">
                     Modalità Viaggio Tecnici:
-                    <InfoTooltip text="Scegli se i tecnici viaggiano col furgone aziendale (costo km/benzina/usura) o con mezzi pubblici (Treno/Aereo + Hotel + Auto Noleggio)." />
+                    <InfoTooltip text="Se scegli Mezzi Pubblici, i costi di trasporto pesante (Bilico/Gru) NON verranno calcolati." />
                 </span>
                 <div className="flex bg-white rounded-lg p-1 border border-slate-200">
                     <button 
@@ -330,8 +364,8 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
              {/* Manual Extra Costs (Dynamic) */}
              <div>
                <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-1">
-                  <Anchor size={14} /> Costi Extra (Es. Traghetto, Pedaggi ZTL, etc)
-                  <InfoTooltip text="Aggiungi manualmente costi non previsti (es. traghetti, permessi ZTL, parcheggi speciali). Verranno sommati al totale." />
+                  <Anchor size={14} /> Costi Extra (Es. Pedaggi ZTL speciali)
+                  <InfoTooltip text="Aggiungi manualmente costi non previsti. I traghetti vengono calcolati automaticamente se necessari." />
                </label>
                
                {/* List of added extra costs */}
@@ -358,7 +392,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                      value={newExtraLabel}
                      onChange={(e) => setNewExtraLabel(e.target.value)}
                      className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                     placeholder="Descrizione (es. Traghetto)"
+                     placeholder="Descrizione"
                    />
                    <div className="relative w-24">
                        <input 
@@ -383,15 +417,21 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
             {inputs.logistics.fetched && (
                 <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-3 animate-in fade-in duration-500">
                     <div className="grid grid-cols-2 gap-4 text-sm">
+                        
+                        {/* Hide Distance if Public Transport is used as requested */}
+                        {!inputs.usePublicTransport && (
+                            <div>
+                                <span className="text-slate-500 block">Distanza (Solo Andata)</span>
+                                <span className="font-semibold text-slate-800 text-lg">{inputs.logistics.distanceKm} km</span>
+                            </div>
+                        )}
+                        
                         <div>
-                            <span className="text-slate-500 block">Distanza (Solo Andata)</span>
-                            <span className="font-semibold text-slate-800 text-lg">{inputs.logistics.distanceKm} km</span>
+                            <span className="text-slate-500 block">Durata Viaggio (Solo Andata)</span>
+                            <span className="font-semibold text-slate-800 text-lg">{getDurationDisplay()}</span>
                         </div>
+                        
                         <div>
-                            <span className="text-slate-500 block">Viaggio (Solo Andata)</span>
-                            <span className="font-semibold text-slate-800 text-lg">{Math.floor(inputs.logistics.durationMinutes / 60)}h {inputs.logistics.durationMinutes % 60}m</span>
-                        </div>
-                         <div>
                             <span className="text-slate-500 block flex items-center gap-1">
                                 Prezzo Hotel 3* (Media)
                                 {inputs.logistics.hotelSource && (
@@ -403,6 +443,30 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                             <span className="font-semibold text-slate-800 text-lg">€ {inputs.logistics.avgHotelPrice} /notte</span>
                         </div>
                     </div>
+
+                    {/* Ferry Info (If needed) */}
+                    {inputs.logistics.isIsland && !inputs.usePublicTransport && (
+                         <div className="bg-blue-50 border border-blue-200 p-2 rounded text-sm mt-2">
+                             <div className="font-semibold text-blue-800 flex items-center gap-1">
+                                 <Anchor size={14}/> Traghetti Rilevati
+                                 {inputs.logistics.ferrySource && (
+                                     <a href={inputs.logistics.ferrySource} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline ml-2 text-xs font-normal flex items-center gap-1">
+                                        <ExternalLink size={10}/> Fonte
+                                     </a>
+                                 )}
+                             </div>
+                             <div className="grid grid-cols-2 gap-2 mt-1">
+                                 <div>
+                                     <span className="text-xs text-slate-500 block">Furgone (A/R)</span>
+                                     <span className="font-medium">€ {inputs.logistics.ferryCostVan}</span>
+                                 </div>
+                                 <div>
+                                     <span className="text-xs text-slate-500 block">Bilico (A/R)</span>
+                                     <span className="font-medium">€ {inputs.logistics.ferryCostTruck}</span>
+                                 </div>
+                             </div>
+                         </div>
+                    )}
 
                     {/* Detailed Public Transport - Selectable */}
                     {inputs.usePublicTransport && (
@@ -422,10 +486,12 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                                      <TrainFront size={14}/> Treno
                                  </div>
                                  <div className="text-slate-500 text-xs">Verona PN ↔ Dest.</div>
-                                 <div className="font-bold text-lg mt-1">€ {inputs.logistics.trainPrice || '--'}</div>
+                                 <div className="text-xs text-slate-500 mt-1">
+                                     {formatSplitPrice(inputs.logistics.trainPrice)}
+                                 </div>
                                  {inputs.logistics.trainSource && (
                                     <a href={inputs.logistics.trainSource} target="_blank" rel="noopener noreferrer" className="text-blue-600 text-xs hover:underline flex items-center gap-1 mt-1" onClick={(e) => e.stopPropagation()}>
-                                        <ExternalLink size={10} /> Vedi Offerta
+                                        <ExternalLink size={10} /> Fonte
                                     </a>
                                  )}
                              </div>
@@ -443,10 +509,12 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                                      <Plane size={14}/> Aereo
                                  </div>
                                  <div className="text-slate-500 text-xs">VRN ↔ Aeroporto</div>
-                                 <div className="font-bold text-lg mt-1">€ {inputs.logistics.planePrice || '--'}</div>
+                                 <div className="text-xs text-slate-500 mt-1">
+                                     {formatSplitPrice(inputs.logistics.planePrice)}
+                                 </div>
                                  {inputs.logistics.planeSource && (
                                     <a href={inputs.logistics.planeSource} target="_blank" rel="noopener noreferrer" className="text-blue-600 text-xs hover:underline flex items-center gap-1 mt-1" onClick={(e) => e.stopPropagation()}>
-                                        <ExternalLink size={10} /> Vedi Offerta
+                                        <ExternalLink size={10} /> Fonte
                                     </a>
                                  )}
                              </div>

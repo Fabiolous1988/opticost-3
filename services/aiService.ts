@@ -77,24 +77,33 @@ export const fetchLogisticsFromAI = async (destination: string, apiKey: string, 
     ${dateInfo}
 
     Task: Search the web to find REAL-TIME logistics data prices and their SOURCE URLs.
-    1. Exact driving distance (KM) and duration.
-    2. Average 3-star hotel price per night in destination (single room).
-    3. Round Trip (Andata/Ritorno) cost per person for Train (Verona PN -> Dest) and Plane (Verona VRN -> Dest). If dates are provided, look for prices on those specific days.
-    4. Last mile cost (Taxi/Bus) from station/airport to site.
-
-    IMPORTANT: For prices (Hotel, Train, Plane), you MUST provide the URL of the source where you found the price.
+    
+    1. Exact driving distance (KM) and duration (minutes).
+    2. Average 3-star hotel price per night in destination (single room). Source URL required.
+    3. Round Trip (Andata/Ritorno) cost per person for Train (Verona PN -> Dest) and Plane (Verona VRN -> Dest). Source URL required.
+       - Also find the *duration* of the Train ride and the Flight (one way) in minutes.
+    4. Last mile cost (Taxi/Bus) from station/airport to site AND Last mile duration (minutes).
+    5. FERRY CHECK: Does reaching this destination from Verona require a Ferry (e.g. Sardinia, Sicily, Elba)?
+       - If YES, find the Round Trip cost for a Commercial Van (Furgone) and for an Articulated Truck (Bilico/Autoarticolato). Source URL required.
 
     Return JSON:
     {
       "distanceKm": number,
-      "durationMinutes": number,
+      "driveDurationMinutes": number,
       "avgHotelPrice": number,
       "hotelSource": "url_string",
       "trainPrice": number,
       "trainSource": "url_string",
+      "trainDurationMinutes": number,
       "planePrice": number,
       "planeSource": "url_string",
+      "planeDurationMinutes": number,
       "lastMilePrice": number,
+      "lastMileDurationMinutes": number,
+      "ferryCostVan": number,
+      "ferryCostTruck": number,
+      "ferrySource": "url_string",
+      "isIsland": boolean,
       "recommendedMode": "train" | "plane" | "none"
     }
   `;
@@ -128,14 +137,27 @@ export const fetchLogisticsFromAI = async (destination: string, apiKey: string, 
             const json = JSON.parse(cleaned);
             return {
                 distanceKm: Number(json.distanceKm) || 0,
-                durationMinutes: Number(json.durationMinutes) || 0,
+                driveDurationMinutes: Number(json.driveDurationMinutes) || 0,
+                
                 avgHotelPrice: Number(json.avgHotelPrice) || 0,
                 hotelSource: json.hotelSource || "",
+                
                 trainPrice: Number(json.trainPrice) || 0,
                 trainSource: json.trainSource || "",
+                trainDurationMinutes: Number(json.trainDurationMinutes) || 0,
+                
                 planePrice: Number(json.planePrice) || 0,
                 planeSource: json.planeSource || "",
+                planeDurationMinutes: Number(json.planeDurationMinutes) || 0,
+
                 lastMilePrice: Number(json.lastMilePrice) || 0,
+                lastMileDurationMinutes: Number(json.lastMileDurationMinutes) || 30, // Default 30 min last mile if missing
+
+                ferryCostVan: Number(json.ferryCostVan) || 0,
+                ferryCostTruck: Number(json.ferryCostTruck) || 0,
+                ferrySource: json.ferrySource || "",
+                isIsland: Boolean(json.isIsland),
+
                 recommendedMode: json.recommendedMode || 'none',
                 fetched: true
             };

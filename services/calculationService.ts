@@ -20,7 +20,17 @@ export const calculateQuote = (
 
   // Use AI extracted distance if available
   const distanceKmOneWay = inputs.logistics.fetched ? inputs.logistics.distanceKm : 0;
-  const durationMinOneWay = inputs.logistics.fetched ? inputs.logistics.durationMinutes : 0;
+  // Determine duration based on mode
+  let durationMinOneWay = inputs.logistics.fetched ? inputs.logistics.driveDurationMinutes : 0;
+  
+  if (inputs.usePublicTransport && inputs.logistics.fetched) {
+      if (inputs.publicTransportMode === 'plane') {
+          durationMinOneWay = inputs.logistics.planeDurationMinutes + inputs.logistics.lastMileDurationMinutes;
+      } else {
+          durationMinOneWay = inputs.logistics.trainDurationMinutes + inputs.logistics.lastMileDurationMinutes;
+      }
+  }
+
   const hotelCostPerNight = (inputs.logistics.fetched && inputs.logistics.avgHotelPrice > 0) 
     ? inputs.logistics.avgHotelPrice 
     : 120;
@@ -46,7 +56,7 @@ export const calculateQuote = (
       const total = basePrice + inputs.logistics.lastMilePrice;
       
       // Fallback if AI returned 0 but recommended it
-      return total > 0 ? total : (distanceKmOneWay * 2 * 0.25);
+      return total > 0 ? total : 0;
   };
 
   const getSplitCostString = (total: number): string => {
@@ -154,6 +164,12 @@ export const calculateQuote = (
         const wearCost = totalKm * vars.costo_usura_mezzo_euro_km;
         const tollsCost = totalKm * 0.12; 
 
+        // Ferry for Van
+        let ferryTotal = 0;
+        if (inputs.logistics.isIsland && inputs.logistics.ferryCostVan > 0) {
+            ferryTotal = inputs.logistics.ferryCostVan * numberOfRoundTrips;
+        }
+
         internalCosts.push({ 
             label: 'Carburante Furgone', 
             value: fuelCost, 
@@ -165,6 +181,15 @@ export const calculateQuote = (
             value: wearCost + tollsCost,
             tooltip: `Logica: Usura (${vars.costo_usura_mezzo_euro_km}€/km) + Pedaggi stima (0.12€/km) x Km Totali.`
         });
+        
+        if (ferryTotal > 0) {
+            internalCosts.push({ 
+                label: 'Traghetti Furgone (A/R)', 
+                value: ferryTotal,
+                details: getSplitCostString(ferryTotal),
+                tooltip: `Logica: Costo Traghetto Furgone rilevato AI (${inputs.logistics.ferryCostVan}€) x Numero Viaggi.`
+            });
+        }
 
         if (isTrasferta) {
              const diaria = numTechs * vars.diaria_squadra_interna * inputs.assistenzaGiorni;
@@ -301,6 +326,14 @@ export const calculateQuote = (
                 const wearCost = (totalKm * vars.costo_usura_mezzo_euro_km);
                 const tollsCost = totalKm * 0.12; 
 
+                // Ferry
+                let ferryTotal = 0;
+                if (inputs.logistics.isIsland && inputs.logistics.ferryCostVan > 0) {
+                     // Assume 1 trip (or more if long job)
+                     const nTrips = isTrasferta ? 1 : daysRequired;
+                     ferryTotal = inputs.logistics.ferryCostVan * nTrips;
+                }
+
                 internalCosts.push({ 
                     label: 'Carburante Furgone', 
                     value: fuelCost, 
@@ -312,6 +345,15 @@ export const calculateQuote = (
                     value: wearCost + tollsCost,
                     tooltip: `Logica: Usura veicolo (${vars.costo_usura_mezzo_euro_km}€/km) + Pedaggi autostradali.`
                 });
+
+                if (ferryTotal > 0) {
+                    internalCosts.push({ 
+                        label: 'Traghetti Furgone (A/R)', 
+                        value: ferryTotal,
+                        details: getSplitCostString(ferryTotal),
+                        tooltip: `Logica: Costo Traghetto Furgone rilevato AI (${inputs.logistics.ferryCostVan}€) x Viaggi.`
+                    });
+                }
 
                 if (isTrasferta) {
                     const nights = Math.max(0, daysRequired - 1);
@@ -340,66 +382,11 @@ export const calculateQuote = (
                  value: laborSite, 
                  details: `${(totalWorkHours * externalRatio).toFixed(1)}h x €${rateExternal}`, 
                  isBold: true,
-                 tooltip: `Logica: Ore Totali pro-quota esterna x Costo Orario Esterno (€${rateExternal}). Include margine azienda.`
+                 tooltip: `Logica: Ore Totali pro-quota esterna x Costo Orario Esterno (€${rateExternal}). Include margine azienda. NESSUN rimborso extra.`
              });
-
-             if (inputs.usePublicTransport && inputs.logistics.fetched) {
-                 const ticketCost = getPublicTransportCostPerPerson() * externalTechs;
-                 externalCosts.push({ 
-                     label: 'Biglietti Mezzi (A/R)', 
-                     value: ticketCost,
-                     details: `${getSplitCostString(ticketCost)}`,
-                     tooltip: `Logica: Rimborso biglietti A/R per ${externalTechs} tecnici esterni.`
-                 });
-
-                 const localTrans = 20 * daysRequired;
-                 externalCosts.push({ label: 'Trasporti Locali', value: localTrans });
-                 
-                 const nights = Math.max(0, daysRequired - 1); 
-                 const hotelCost = nights * externalTechs * hotelCostPerNight;
-                 if (hotelCost > 0) externalCosts.push({ label: 'Hotel Squadra', value: hotelCost });
-
-                 const diaria = externalTechs * vars.diaria_squadra_esterna * daysRequired;
-                 externalCosts.push({ label: 'Diaria/Vitto', value: diaria });
-             } else {
-                 if (internalTechs === 0) {
-                     // Only External -> We pay for the Van (rental or ours) + Fuel
-                     const tripDistance = distanceKmOneWay * 2;
-                     let totalKm = 0;
-                     if (isTrasferta) {
-                        totalKm += tripDistance; 
-                        totalKm += (daysRequired * 30);
-                        if (daysRequired > 5) {
-                            const weeks = Math.floor(daysRequired / 5);
-                            totalKm += (weeks * tripDistance);
-                        }
-                    } else {
-                        totalKm = tripDistance * daysRequired;
-                    }
-                    const fuelCost = (totalKm / vars.km_per_litro_furgone * vars.costo_medio_gasolio_euro_litro);
-                    const wearCost = (totalKm * vars.costo_usura_mezzo_euro_km);
-                    const tollsCost = totalKm * 0.12; 
-
-                    externalCosts.push({ 
-                        label: 'Rimborso Carburante/Furgone', 
-                        value: fuelCost + wearCost + tollsCost,
-                        tooltip: `Logica: Rimborso spese viaggio furgone squadra esterna (Carburante + Usura + Pedaggi).`
-                    });
-                 }
-
-                 if (isTrasferta) {
-                    const nights = Math.max(0, daysRequired - 1);
-                    const hotelCost = nights * externalTechs * hotelCostPerNight;
-                    if(hotelCost > 0) externalCosts.push({ 
-                        label: 'Hotel Squadra', 
-                        value: hotelCost,
-                        tooltip: `Logica: Rimborso Hotel per ${externalTechs} tecnici esterni.`
-                    });
-
-                    const diaria = externalTechs * vars.diaria_squadra_esterna * daysRequired;
-                    externalCosts.push({ label: 'Diaria/Vitto', value: diaria });
-                 }
-             }
+             
+             // STRICTLY NO EXTRA COSTS FOR EXTERNAL TEAM AS REQUESTED
+             // "La squadra esterna NON ha diritto a hotel e rimborso viaggio di alcun tipo. L'unica paga a cui ha diritto è quella oraria."
           }
       }
   }
@@ -433,127 +420,183 @@ export const calculateQuote = (
   // ==========================================
   // MATERIAL TRANSPORT
   // ==========================================
-  let numZavorre = 0;
-  let weightZavorre = 0;
   
-  if (inputs.optZavorre && inputs.postiAuto > 0 && selectedBallast) {
-    numZavorre = 1 + Math.ceil(inputs.postiAuto / 2);
-    const bWeight = selectedBallast.peso_kg || 0;
-    weightZavorre = numZavorre * bWeight;
-  }
-
-  const structureWeight = modelData.peso_struttura_per_posto * inputs.postiAuto;
-  const totalWeight = structureWeight + weightZavorre;
-
-  // Rate Lookup
-  const cleanDest = inputs.indirizzoCompleto.trim().toLowerCase(); 
-  const rate = transportRates.find(r => 
-    cleanDest.includes(r.provincia.toLowerCase()) || 
-    cleanDest.includes(r.regione.toLowerCase())
-  );
-  const prices = rate?.prices || {};
-
-  const LIMIT_BILICO = 24000;
-  const LIMIT_GRU = 16000;
-  const LIMIT_FURGONE = 1000;
+  // LOGIC CHANGE: If using Public Transport, User requested "NON mettere nel preventivo i costi di bilico, camion con gru o altro".
+  // Only calculate material transport if using "Nostro Mezzo" (implies standard truck logistics) or explicitly forced.
+  // We will assume "Mezzi Pubblici" means no Heavy Transport charged on this quote.
 
   let transportMethod = 'Non Definito';
   let shippingCost = 0;
   let unloadingSurcharge = 0;
+  let ferryExtra = 0;
 
-  const findPrice = (keyword: string, spots: number): number => {
-      const keys = Object.keys(prices);
-      const vehicleKeys = keys.filter(k => k.toLowerCase().includes(keyword.toLowerCase()));
-      for (const key of vehicleKeys) {
-        const lower = key.toLowerCase();
-        const range = lower.match(/(\d+)\s*-\s*(\d+)/);
-        if (range) {
-            const min = parseInt(range[1]);
-            const max = parseInt(range[2]);
-            if (spots >= min && spots <= max) return prices[key];
-        }
-        const gt = lower.match(/>\s*(\d+)/);
-        if (gt) {
-            const min = parseInt(gt[1]);
-            if (spots > min) return prices[key];
-        }
-      }
-      const generic = vehicleKeys.find(k => !/\d/.test(k));
-      if (generic) return prices[generic];
-      if (vehicleKeys.length > 0) return prices[vehicleKeys[0]];
-      return 0;
-  };
-
-  // 1. Furgone Aziendale (Material)
-  if (totalWeight < LIMIT_FURGONE && !inputs.optZavorre && inputs.postiAuto <= 3) {
-      transportMethod = 'Furgone Aziendale (Nostro Mezzo)';
-      const dist = distanceKmOneWay * 2; 
-      const fuel = (dist / vars.km_per_litro_furgone) * vars.costo_medio_gasolio_euro_litro;
-      const wear = dist * vars.costo_usura_mezzo_euro_km;
-      const tolls = dist * 0.12;
-      const driverLogistics = isTrasferta ? (vars.diaria_squadra_interna + hotelCostPerNight) : 0;
+  if (!inputs.usePublicTransport) {
       
-      shippingCost = fuel + wear + tolls + driverLogistics;
-      generalLogistics.push({ 
-          label: 'Trasporto Materiale (Furgone)', 
-          value: shippingCost, 
-          details: 'Carburante + Autista dedicato', 
-          isBold: true,
-          tooltip: `Logica: Peso materiale (${totalWeight}kg) < 1000kg. Costo viaggio furgone + eventuale trasferta autista.`
-      });
-  }
-  // 2. Camion con Gru
-  else if (totalWeight <= LIMIT_GRU) {
-      let baseCost = findPrice('gru', inputs.postiAuto);
-      if (baseCost === 0) baseCost = 1300; 
-
-      transportMethod = 'Camion con Gru (Autoscarico)';
-      unloadingSurcharge = 100; // una tantum
-
-      // For Camion Gru: Cost + Diaria Driver + Hotel Driver (if Trasferta)
-      let driverExtra = 0;
-      if (isTrasferta) {
-          driverExtra = vars.diaria_squadra_interna + hotelCostPerNight;
-      } else {
-          driverExtra = vars.diaria_squadra_interna; 
+      let numZavorre = 0;
+      let weightZavorre = 0;
+      
+      if (inputs.optZavorre && inputs.postiAuto > 0 && selectedBallast) {
+        numZavorre = 1 + Math.ceil(inputs.postiAuto / 2);
+        const bWeight = selectedBallast.peso_kg || 0;
+        weightZavorre = numZavorre * bWeight;
       }
 
-      shippingCost = baseCost + driverExtra;
-      generalLogistics.push({ 
-          label: 'Nolo Camion Gru', 
-          value: baseCost,
-          tooltip: `Logica: Tariffa regione/provincia per Camion Gru (${baseCost}€).`
-      });
-      generalLogistics.push({ 
-          label: 'Supplemento Scarico Gru', 
-          value: unloadingSurcharge,
-          tooltip: `Logica: Supplemento fisso per operazione di scarico con gru.`
-      });
-      generalLogistics.push({ 
-          label: 'Logistica Autista Gru (Diaria/Hotel)', 
-          value: driverExtra,
-          tooltip: `Logica: Diaria Autista + eventuale Hotel se in trasferta.`
+      const structureWeight = modelData.peso_struttura_per_posto * inputs.postiAuto;
+      const totalWeight = structureWeight + weightZavorre;
+
+      // Rate Lookup
+      const cleanDest = inputs.indirizzoCompleto.trim().toLowerCase(); 
+      const rate = transportRates.find(r => 
+        cleanDest.includes(r.provincia.toLowerCase()) || 
+        cleanDest.includes(r.regione.toLowerCase())
+      );
+      const prices = rate?.prices || {};
+
+      const LIMIT_BILICO = 24000;
+      const LIMIT_GRU = 16000;
+      const LIMIT_FURGONE = 1000;
+
+      const findPrice = (keyword: string, spots: number): number => {
+          const keys = Object.keys(prices);
+          const vehicleKeys = keys.filter(k => k.toLowerCase().includes(keyword.toLowerCase()));
+          for (const key of vehicleKeys) {
+            const lower = key.toLowerCase();
+            const range = lower.match(/(\d+)\s*-\s*(\d+)/);
+            if (range) {
+                const min = parseInt(range[1]);
+                const max = parseInt(range[2]);
+                if (spots >= min && spots <= max) return prices[key];
+            }
+            const gt = lower.match(/>\s*(\d+)/);
+            if (gt) {
+                const min = parseInt(gt[1]);
+                if (spots > min) return prices[key];
+            }
+          }
+          const generic = vehicleKeys.find(k => !/\d/.test(k));
+          if (generic) return prices[generic];
+          if (vehicleKeys.length > 0) return prices[vehicleKeys[0]];
+          return 0;
+      };
+
+      // 1. Furgone Aziendale (Material)
+      if (totalWeight < LIMIT_FURGONE && !inputs.optZavorre && inputs.postiAuto <= 3) {
+          transportMethod = 'Furgone Aziendale (Nostro Mezzo)';
+          const dist = distanceKmOneWay * 2; 
+          const fuel = (dist / vars.km_per_litro_furgone) * vars.costo_medio_gasolio_euro_litro;
+          const wear = dist * vars.costo_usura_mezzo_euro_km;
+          const tolls = dist * 0.12;
+          const driverLogistics = isTrasferta ? (vars.diaria_squadra_interna + hotelCostPerNight) : 0;
+          
+          shippingCost = fuel + wear + tolls + driverLogistics;
+
+          // Note: Ferry for this furgone is likely same as team furgone if they travel together?
+          // If Internal Team is present, they take the van. 
+          // If only shipping, we need to add ferry.
+          // To avoid double counting, if internal team exists, this "Material Transport" cost is duplicative of their travel cost?
+          // Usually separate "Material Transport" implies a dedicated delivery trip if the team can't carry it.
+          // Given logic, we sum it up. 
+          if (inputs.logistics.isIsland && inputs.logistics.ferryCostVan > 0) {
+             ferryExtra = inputs.logistics.ferryCostVan;
+          }
+
+          generalLogistics.push({ 
+              label: 'Trasporto Materiale (Furgone)', 
+              value: shippingCost + ferryExtra, 
+              details: 'Carburante + Autista dedicato' + (ferryExtra ? ' + Traghetto' : ''), 
+              isBold: true,
+              tooltip: `Logica: Peso materiale (${totalWeight}kg) < 1000kg. Costo viaggio furgone + eventuale trasferta autista.`
+          });
+      }
+      // 2. Camion con Gru
+      else if (totalWeight <= LIMIT_GRU) {
+          let baseCost = findPrice('gru', inputs.postiAuto);
+          if (baseCost === 0) baseCost = 1300; 
+
+          transportMethod = 'Camion con Gru (Autoscarico)';
+          unloadingSurcharge = 100; // una tantum
+
+          // For Camion Gru: Cost + Diaria Driver + Hotel Driver (if Trasferta)
+          let driverExtra = 0;
+          if (isTrasferta) {
+              driverExtra = vars.diaria_squadra_interna + hotelCostPerNight;
+          } else {
+              driverExtra = vars.diaria_squadra_interna; 
+          }
+
+          if (inputs.logistics.isIsland && inputs.logistics.ferryCostTruck > 0) {
+             ferryExtra = inputs.logistics.ferryCostTruck;
+          }
+
+          shippingCost = baseCost + driverExtra + ferryExtra;
+          
+          generalLogistics.push({ 
+              label: 'Nolo Camion Gru', 
+              value: baseCost,
+              tooltip: `Logica: Tariffa regione/provincia per Camion Gru (${baseCost}€).`
+          });
+          generalLogistics.push({ 
+              label: 'Supplemento Scarico Gru', 
+              value: unloadingSurcharge,
+              tooltip: `Logica: Supplemento fisso per operazione di scarico con gru.`
+          });
+          generalLogistics.push({ 
+              label: 'Logistica Autista Gru (Diaria/Hotel)', 
+              value: driverExtra,
+              tooltip: `Logica: Diaria Autista + eventuale Hotel se in trasferta.`
+          });
+          if (ferryExtra > 0) {
+             generalLogistics.push({ 
+                 label: 'Traghetto Camion (A/R)', 
+                 value: ferryExtra,
+                 details: getSplitCostString(ferryExtra),
+                 tooltip: `Logica: Costo Traghetto Bilico/Camion rilevato AI.`
+             });
+          }
+      }
+      // 3. Bilico
+      else {
+          let baseCost = findPrice('bilico', inputs.postiAuto);
+          if (baseCost === 0) baseCost = 1600; 
+
+          const numTrucks = Math.ceil(totalWeight / LIMIT_BILICO);
+          transportMethod = numTrucks > 1 ? `Bilico Standard x${numTrucks}` : 'Bilico Standard';
+          
+          if (inputs.logistics.isIsland && inputs.logistics.ferryCostTruck > 0) {
+             ferryExtra = inputs.logistics.ferryCostTruck * numTrucks;
+          }
+
+          // For Bilico: "All inclusive nel costo" (User request)
+          shippingCost = (baseCost * numTrucks) + ferryExtra;
+          
+          generalLogistics.push({ 
+              label: `Trasporto ${transportMethod}`, 
+              value: shippingCost - ferryExtra, // Base cost
+              isBold: true,
+              tooltip: `Logica: Tariffa Bilico (${baseCost}€) x Numero Mezzi (${numTrucks}). Include tutto.`
+          });
+
+          if (ferryExtra > 0) {
+             generalLogistics.push({ 
+                 label: 'Traghetto Bilico (A/R)', 
+                 value: ferryExtra,
+                 details: getSplitCostString(ferryExtra),
+                 tooltip: `Logica: Costo Traghetto Bilico rilevato AI x Numero Mezzi.`
+             });
+          }
+      }
+
+      transportTotal = shippingCost + unloadingSurcharge;
+  } else {
+      // Mezzi Pubblici selected -> No Material Transport Costs
+      transportMethod = 'Trasporto Materiali Escluso (Viaggio Mezzi Pubblici)';
+      generalLogistics.push({
+          label: 'Trasporto Materiali',
+          value: 0,
+          details: 'Non calcolato (Opzione Mezzi Pubblici attiva)',
+          tooltip: 'Hai selezionato Mezzi Pubblici per la squadra. Come da richiesta, i costi di Bilico/Gru sono stati esclusi da questo preventivo.'
       });
   }
-  // 3. Bilico
-  else {
-      let baseCost = findPrice('bilico', inputs.postiAuto);
-      if (baseCost === 0) baseCost = 1600; 
-
-      const numTrucks = Math.ceil(totalWeight / LIMIT_BILICO);
-      transportMethod = numTrucks > 1 ? `Bilico Standard x${numTrucks}` : 'Bilico Standard';
-      
-      // For Bilico: "All inclusive nel costo" (User request)
-      shippingCost = baseCost * numTrucks;
-      generalLogistics.push({ 
-          label: `Trasporto ${transportMethod}`, 
-          value: shippingCost, 
-          isBold: true,
-          tooltip: `Logica: Tariffa Bilico (${baseCost}€) x Numero Mezzi (${numTrucks}). Include tutto.`
-      });
-  }
-
-  transportTotal = shippingCost + unloadingSurcharge;
 
   // Aggregate totals
   const internalTotal = internalCosts.reduce((sum, item) => sum + item.value, 0);
@@ -572,14 +615,14 @@ export const calculateQuote = (
     equipmentTotal,
     extraCostsTotal,
     transportMethod,
-    totalWeight,
+    totalWeight: 0, // Not relevant for display if simplified
     totalHours: totalWorkHours,
     totalDays: daysRequired,
     internalTeamCosts: internalCosts,
     externalTeamCosts: externalCosts,
     generalLogisticsCosts: generalLogistics,
-    numZavorre,
-    weightZavorre,
+    numZavorre: 0,
+    weightZavorre: 0,
     discountAppliedPerc
   };
 };

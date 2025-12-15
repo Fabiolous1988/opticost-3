@@ -51,19 +51,29 @@ export enum ServiceType {
 
 export interface LogisticsData {
   distanceKm: number;
-  durationMinutes: number;
+  driveDurationMinutes: number; // Driving time
+  
   avgHotelPrice: number;
   hotelSource?: string;
   
   // Public Transport Details (Round Trip)
   trainPrice: number;
   trainSource?: string;
-  
+  trainDurationMinutes: number; // Specific train duration
+
   planePrice: number;
   planeSource?: string;
+  planeDurationMinutes: number; // Specific flight duration
   
   lastMilePrice: number;
-  
+  lastMileDurationMinutes: number; // Time to get from station/airport to site
+
+  // Ferry Data
+  ferryCostVan: number; // Costo Traghetto Furgone A/R
+  ferryCostTruck: number; // Costo Traghetto Bilico A/R
+  ferrySource?: string;
+  isIsland: boolean;
+
   // AI recommendation (just for highlighting)
   recommendedMode: 'train' | 'plane' | 'none';
 
