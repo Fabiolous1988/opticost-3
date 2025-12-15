@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Calculator as CalcIcon, Truck, Users, Hammer, FileDown, Search, MapPin, Building, TrainFront, Box, Plane, CreditCard, Calendar, Weight, AlertCircle, Anchor, RotateCcw, KeyRound, Plus, Trash2 } from 'lucide-react';
+import { Settings, Calculator as CalcIcon, Truck, Users, Hammer, FileDown, Search, MapPin, Building, TrainFront, Box, Plane, CreditCard, Calendar, Weight, AlertCircle, Anchor, RotateCcw, KeyRound, Plus, Trash2, HelpCircle, ExternalLink } from 'lucide-react';
 import { GlobalVariables, TransportRate, QuoteInputs, ServiceType, ModelData, BallastData, CustomExtraCost } from '../types';
 import { calculateQuote } from '../services/calculationService';
 import { fetchLogisticsFromAI } from '../services/aiService';
@@ -14,41 +14,61 @@ interface Props {
   apiKey: string;
 }
 
+// Tooltip Component
+const InfoTooltip: React.FC<{ text: string }> = ({ text }) => {
+  return (
+    <div className="group relative inline-block ml-2 align-middle">
+      <HelpCircle size={15} className="text-slate-400 hover:text-blue-500 cursor-help transition-colors" />
+      <div className="invisible group-hover:visible absolute z-50 w-72 p-3 mt-2 text-xs text-slate-100 bg-slate-800 rounded-md shadow-xl -left-1/2 transform -translate-x-1/3 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
+        {text}
+        <div className="absolute w-2 h-2 bg-slate-800 transform rotate-45 -top-1 left-1/2 -ml-1"></div>
+      </div>
+    </div>
+  );
+};
+
 const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSettings, onOpenApiKeySettings, models, ballasts, apiKey }) => {
   
-  const getInitialState = (): QuoteInputs => ({
-    serviceType: ServiceType.INSTALLAZIONE_COMPLETA,
-    startDate: new Date().toISOString().split('T')[0],
-    indirizzoCompleto: '',
-    logistics: {
-        distanceKm: 0,
-        durationMinutes: 0,
-        avgHotelPrice: 0,
-        trainPrice: 0,
-        planePrice: 0,
-        lastMilePrice: 0,
-        recommendedMode: 'none',
-        fetched: false
-    },
-    extraCosts: [],
-    modello: models.length > 0 ? models[0].nome : '',
-    postiAuto: 2,
-    useInternalTechs: true,
-    numInternalTechs: 2,
-    useExternalTechs: false,
-    numExternalTechs: 2,
-    assistenzaGiorni: 1,
-    assistenzaTecniciCount: 1,
-    optInstallazioneTelo: false,
-    optPannelliFotovoltaici: false,
-    optIlluminazioneLED: false,
-    optPannelliCoibentati: false,
-    clientHasForklift: true, 
-    usePublicTransport: false,
-    publicTransportMode: 'train',
-    optZavorre: false,
-    tipoZavorraNome: ballasts.length > 0 ? ballasts[0].nome : ''
-  });
+  const getInitialState = (): QuoteInputs => {
+      // Default date logic: Today + 15 days
+      const defaultDate = new Date();
+      defaultDate.setDate(defaultDate.getDate() + 15);
+      const defaultDateStr = defaultDate.toISOString().split('T')[0];
+
+      return {
+        serviceType: ServiceType.INSTALLAZIONE_COMPLETA,
+        startDate: defaultDateStr,
+        indirizzoCompleto: '',
+        logistics: {
+            distanceKm: 0,
+            durationMinutes: 0,
+            avgHotelPrice: 0,
+            trainPrice: 0,
+            planePrice: 0,
+            lastMilePrice: 0,
+            recommendedMode: 'none',
+            fetched: false
+        },
+        extraCosts: [],
+        modello: models.length > 0 ? models[0].nome : '',
+        postiAuto: 2,
+        useInternalTechs: true,
+        numInternalTechs: 2,
+        useExternalTechs: false,
+        numExternalTechs: 2,
+        assistenzaGiorni: 1,
+        assistenzaTecniciCount: 1,
+        optInstallazioneTelo: false,
+        optPannelliFotovoltaici: false,
+        optIlluminazioneLED: false,
+        optPannelliCoibentati: false,
+        clientHasForklift: true, 
+        usePublicTransport: false,
+        publicTransportMode: 'train',
+        optZavorre: false,
+        tipoZavorraNome: ballasts.length > 0 ? ballasts[0].nome : ''
+      };
+  };
 
   const [inputs, setInputs] = useState<QuoteInputs>(getInitialState());
   const [result, setResult] = useState<any>(null);
@@ -198,7 +218,10 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
           
           {/* Service Selection */}
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <h2 className="text-lg font-semibold mb-4 text-slate-800">Tipo Servizio</h2>
+            <h2 className="text-lg font-semibold mb-4 text-slate-800 flex items-center">
+                Tipo Servizio
+                <InfoTooltip text="Seleziona se calcolare un preventivo per una nuova installazione completa (con squadra e materiali) o solo assistenza tecnica (manutenzione/riparazione)." />
+            </h2>
             <div className="flex gap-4">
               <button 
                 onClick={() => handleInputChange('serviceType', ServiceType.INSTALLAZIONE_COMPLETA)}
@@ -234,6 +257,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
             <div>
                <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-1">
                   <Calendar size={14} /> Data Inizio Lavori
+                  <InfoTooltip text="La data influenza il calcolo dei costi di trasporto (es. voli/treni in alta stagione). Di default è impostata a +15 giorni da oggi." />
                </label>
                <input 
                  type="date"
@@ -245,7 +269,10 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
             
             <div className="flex gap-2">
                 <div className="flex-1">
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Indirizzo Completo Cantiere</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center">
+                        Indirizzo Completo Cantiere
+                        <InfoTooltip text="Inserisci l'indirizzo esatto per permettere all'AI di calcolare distanze reali, costi di viaggio e prezzi hotel nella zona." />
+                    </label>
                     <input 
                       type="text" 
                       value={inputs.indirizzoCompleto}
@@ -280,7 +307,10 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
 
             {/* Transport Mode Toggle */}
             <div className="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200">
-                <span className="text-sm font-medium text-slate-700">Modalità Viaggio Tecnici:</span>
+                <span className="text-sm font-medium text-slate-700 flex items-center">
+                    Modalità Viaggio Tecnici:
+                    <InfoTooltip text="Scegli se i tecnici viaggiano col furgone aziendale (costo km/benzina/usura) o con mezzi pubblici (Treno/Aereo + Hotel + Auto Noleggio)." />
+                </span>
                 <div className="flex bg-white rounded-lg p-1 border border-slate-200">
                     <button 
                         onClick={() => handleInputChange('usePublicTransport', false)}
@@ -301,6 +331,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
              <div>
                <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-1">
                   <Anchor size={14} /> Costi Extra (Es. Traghetto, Pedaggi ZTL, etc)
+                  <InfoTooltip text="Aggiungi manualmente costi non previsti (es. traghetti, permessi ZTL, parcheggi speciali). Verranno sommati al totale." />
                </label>
                
                {/* List of added extra costs */}
@@ -361,7 +392,14 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                             <span className="font-semibold text-slate-800 text-lg">{Math.floor(inputs.logistics.durationMinutes / 60)}h {inputs.logistics.durationMinutes % 60}m</span>
                         </div>
                          <div>
-                            <span className="text-slate-500 block">Prezzo Hotel 3* (Media)</span>
+                            <span className="text-slate-500 block flex items-center gap-1">
+                                Prezzo Hotel 3* (Media)
+                                {inputs.logistics.hotelSource && (
+                                    <a href={inputs.logistics.hotelSource} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline inline-flex items-center gap-0.5">
+                                        <ExternalLink size={10} /> Fonte
+                                    </a>
+                                )}
+                            </span>
                             <span className="font-semibold text-slate-800 text-lg">€ {inputs.logistics.avgHotelPrice} /notte</span>
                         </div>
                     </div>
@@ -380,9 +418,16 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                                     : 'bg-white border-slate-200 hover:border-blue-300'
                                 }`}
                              >
-                                 <div className="flex items-center gap-1 font-semibold text-slate-700"><TrainFront size={14}/> Treno</div>
+                                 <div className="flex items-center gap-1 font-semibold text-slate-700">
+                                     <TrainFront size={14}/> Treno
+                                 </div>
                                  <div className="text-slate-500 text-xs">Verona PN ↔ Dest.</div>
                                  <div className="font-bold text-lg mt-1">€ {inputs.logistics.trainPrice || '--'}</div>
+                                 {inputs.logistics.trainSource && (
+                                    <a href={inputs.logistics.trainSource} target="_blank" rel="noopener noreferrer" className="text-blue-600 text-xs hover:underline flex items-center gap-1 mt-1" onClick={(e) => e.stopPropagation()}>
+                                        <ExternalLink size={10} /> Vedi Offerta
+                                    </a>
+                                 )}
                              </div>
 
                              {/* PLANE OPTION */}
@@ -394,9 +439,16 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                                     : 'bg-white border-slate-200 hover:border-blue-300'
                                 }`}
                              >
-                                 <div className="flex items-center gap-1 font-semibold text-slate-700"><Plane size={14}/> Aereo</div>
+                                 <div className="flex items-center gap-1 font-semibold text-slate-700">
+                                     <Plane size={14}/> Aereo
+                                 </div>
                                  <div className="text-slate-500 text-xs">VRN ↔ Aeroporto</div>
                                  <div className="font-bold text-lg mt-1">€ {inputs.logistics.planePrice || '--'}</div>
+                                 {inputs.logistics.planeSource && (
+                                    <a href={inputs.logistics.planeSource} target="_blank" rel="noopener noreferrer" className="text-blue-600 text-xs hover:underline flex items-center gap-1 mt-1" onClick={(e) => e.stopPropagation()}>
+                                        <ExternalLink size={10} /> Vedi Offerta
+                                    </a>
+                                 )}
                              </div>
 
                              <div className="col-span-2 text-xs text-slate-500 flex justify-between px-1 mt-1">
@@ -441,7 +493,10 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
             {inputs.serviceType === ServiceType.INSTALLAZIONE_COMPLETA && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-slate-100">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Modello</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center">
+                      Modello
+                      <InfoTooltip text="Seleziona il modello della struttura. Questo determina le ore di lavoro base per posto auto e il peso dei materiali." />
+                  </label>
                   <select 
                     value={inputs.modello}
                     onChange={(e) => handleInputChange('modello', e.target.value)}
@@ -451,7 +506,10 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Numero Posti Auto</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center">
+                      Numero Posti Auto
+                      <InfoTooltip text="Il numero di posti auto moltiplica le ore di lavoro e il peso della struttura. Più posti = sconti sulla manodopera (se previsti)." />
+                  </label>
                   <input 
                     type="number" 
                     min="1"
@@ -483,7 +541,10 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                         onChange={(e) => handleInputChange('useInternalTechs', e.target.checked)}
                         className="w-5 h-5 text-blue-600 rounded cursor-pointer"
                       />
-                      <span className="font-medium text-slate-700">Personale Azienda (Interno)</span>
+                      <span className="font-medium text-slate-700 flex items-center">
+                          Personale Azienda (Interno)
+                          <InfoTooltip text="Tecnici dipendenti diretti. Costo orario più basso (€17.50), ma vengono pagate anche le ore di viaggio." />
+                      </span>
                     </div>
                     {inputs.useInternalTechs && (
                       <input 
@@ -504,7 +565,10 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                         onChange={(e) => handleInputChange('useExternalTechs', e.target.checked)}
                         className="w-5 h-5 text-blue-600 rounded cursor-pointer"
                       />
-                      <span className="font-medium text-slate-700">Personale Esterno</span>
+                      <span className="font-medium text-slate-700 flex items-center">
+                          Personale Esterno
+                          <InfoTooltip text="Tecnici esterni/appaltatori. Costo orario più alto (€26.50), solitamente include già parte delle spese di viaggio o ha logiche diverse." />
+                      </span>
                     </div>
                     {inputs.useExternalTechs && (
                       <input 
@@ -547,7 +611,10 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                 <div className="mt-4 p-3 border border-orange-200 bg-orange-50 rounded-lg flex justify-between items-center">
                    <div className="flex items-center gap-2">
                        <Box size={20} className="text-orange-600"/>
-                       <span className="font-medium text-slate-800">Mezzo di Scarico/Muletto in Cantiere</span>
+                       <span className="font-medium text-slate-800 flex items-center">
+                           Mezzo di Scarico/Muletto in Cantiere
+                           <InfoTooltip text="Se il cliente NON ha un muletto, verrà calcolato un costo di noleggio settimanale o giornaliero extra." />
+                       </span>
                    </div>
                    <div className="flex items-center gap-2">
                         <span className={`text-sm ${!inputs.clientHasForklift ? 'font-bold text-orange-700' : 'text-slate-500'}`}>NO (Noleggio)</span>
@@ -574,6 +641,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                     />
                     <label htmlFor="optZavorre" className="text-lg font-semibold text-slate-800 flex items-center gap-2 cursor-pointer">
                         <Weight size={20} className="text-slate-500"/> Zavorre
+                        <InfoTooltip text="L'aggiunta di zavorre aumenta significativamente il peso totale, influenzando il tipo di mezzo di trasporto necessario (es. da Furgone a Camion)." />
                     </label>
                  </div>
                  
@@ -645,12 +713,13 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                             <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
                                 <h4 className="font-bold text-blue-700 text-xs uppercase mb-2">Squadra Interna</h4>
                                 {result.internalTeamCosts.map((item: any, idx: number) => (
-                                    <div key={idx} className="flex justify-between items-start text-sm mb-1 last:mb-0 text-slate-700">
-                                        <div>
+                                    <div key={idx} className="flex justify-between items-start text-sm mb-1 last:mb-0 text-slate-700 group">
+                                        <div className="flex items-center">
                                             <span className={item.isBold ? 'font-semibold' : ''}>{item.label}</span>
-                                            {item.details && <span className="block text-xs text-slate-400 font-normal">{item.details}</span>}
+                                            {item.tooltip && <InfoTooltip text={item.tooltip} />}
+                                            {item.details && <span className="block text-xs text-slate-400 font-normal ml-1 lg:ml-0 lg:block lg:w-full">{item.details}</span>}
                                         </div>
-                                        <span className="font-medium">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                                        <span className="font-medium whitespace-nowrap">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
                                     </div>
                                 ))}
                             </div>
@@ -662,11 +731,12 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                                 <h4 className="font-bold text-orange-700 text-xs uppercase mb-2">Squadra Esterna</h4>
                                 {result.externalTeamCosts.map((item: any, idx: number) => (
                                     <div key={idx} className="flex justify-between items-start text-sm mb-1 last:mb-0 text-slate-700">
-                                        <div>
+                                        <div className="flex items-center">
                                             <span className={item.isBold ? 'font-semibold' : ''}>{item.label}</span>
-                                            {item.details && <span className="block text-xs text-slate-400 font-normal">{item.details}</span>}
+                                            {item.tooltip && <InfoTooltip text={item.tooltip} />}
+                                            {item.details && <span className="block text-xs text-slate-400 font-normal ml-1 lg:ml-0 lg:block lg:w-full">{item.details}</span>}
                                         </div>
-                                        <span className="font-medium">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                                        <span className="font-medium whitespace-nowrap">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
                                     </div>
                                 ))}
                             </div>
@@ -678,11 +748,12 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                                 <h4 className="font-bold text-slate-700 text-xs uppercase mb-2">Logistica Materiali & Noleggi</h4>
                                 {result.generalLogisticsCosts.map((item: any, idx: number) => (
                                     <div key={idx} className="flex justify-between items-start text-sm mb-1 last:mb-0 text-slate-700">
-                                        <div>
+                                        <div className="flex items-center">
                                             <span className={item.isBold ? 'font-semibold' : ''}>{item.label}</span>
-                                            {item.details && <span className="block text-xs text-slate-400 font-normal">{item.details}</span>}
+                                            {item.tooltip && <InfoTooltip text={item.tooltip} />}
+                                            {item.details && <span className="block text-xs text-slate-400 font-normal ml-1 lg:ml-0 lg:block lg:w-full">{item.details}</span>}
                                         </div>
-                                        <span className="font-medium">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                                        <span className="font-medium whitespace-nowrap">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
                                     </div>
                                 ))}
                             </div>
@@ -695,7 +766,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                                 {inputs.extraCosts.map((item) => (
                                     <div key={item.id} className="flex justify-between items-start text-sm mb-1 last:mb-0 text-slate-700">
                                         <span>{item.label}</span>
-                                        <span className="font-medium">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                                        <span className="font-medium whitespace-nowrap">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
                                     </div>
                                 ))}
                             </div>

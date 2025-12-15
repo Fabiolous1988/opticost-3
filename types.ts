@@ -53,10 +53,15 @@ export interface LogisticsData {
   distanceKm: number;
   durationMinutes: number;
   avgHotelPrice: number;
+  hotelSource?: string;
   
   // Public Transport Details (Round Trip)
   trainPrice: number;
+  trainSource?: string;
+  
   planePrice: number;
+  planeSource?: string;
+  
   lastMilePrice: number;
   
   // AI recommendation (just for highlighting)
@@ -118,6 +123,7 @@ export interface DetailedCostBreakdown {
   label: string;
   value: number;
   details?: string;
+  tooltip?: string; // Explanation of logic
   isBold?: boolean;
 }
 

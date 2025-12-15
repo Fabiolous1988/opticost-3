@@ -76,19 +76,24 @@ export const fetchLogisticsFromAI = async (destination: string, apiKey: string, 
     You are a logistics planner. Origin: ${AI_ORIGIN_ADDRESS}. Destination: ${destination}.
     ${dateInfo}
 
-    Task: Search the web to find real-time logistics data.
+    Task: Search the web to find REAL-TIME logistics data prices and their SOURCE URLs.
     1. Exact driving distance (KM) and duration.
     2. Average 3-star hotel price per night in destination (single room).
     3. Round Trip (Andata/Ritorno) cost per person for Train (Verona PN -> Dest) and Plane (Verona VRN -> Dest). If dates are provided, look for prices on those specific days.
     4. Last mile cost (Taxi/Bus) from station/airport to site.
+
+    IMPORTANT: For prices (Hotel, Train, Plane), you MUST provide the URL of the source where you found the price.
 
     Return JSON:
     {
       "distanceKm": number,
       "durationMinutes": number,
       "avgHotelPrice": number,
+      "hotelSource": "url_string",
       "trainPrice": number,
+      "trainSource": "url_string",
       "planePrice": number,
+      "planeSource": "url_string",
       "lastMilePrice": number,
       "recommendedMode": "train" | "plane" | "none"
     }
@@ -125,8 +130,11 @@ export const fetchLogisticsFromAI = async (destination: string, apiKey: string, 
                 distanceKm: Number(json.distanceKm) || 0,
                 durationMinutes: Number(json.durationMinutes) || 0,
                 avgHotelPrice: Number(json.avgHotelPrice) || 0,
+                hotelSource: json.hotelSource || "",
                 trainPrice: Number(json.trainPrice) || 0,
+                trainSource: json.trainSource || "",
                 planePrice: Number(json.planePrice) || 0,
+                planeSource: json.planeSource || "",
                 lastMilePrice: Number(json.lastMilePrice) || 0,
                 recommendedMode: json.recommendedMode || 'none',
                 fetched: true
