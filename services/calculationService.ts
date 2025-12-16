@@ -1,5 +1,20 @@
 import { QuoteInputs, GlobalVariables, TransportRate, ServiceType, CalculationResult, ModelData, BallastData, DetailedCostBreakdown } from '../types';
 
+const formatTime = (decimalHours: number): string => {
+  let normalized = decimalHours % 24;
+  if (normalized < 0) normalized += 24;
+  
+  const h = Math.floor(normalized);
+  const m = Math.round((normalized - h) * 60);
+  
+  // Handle edge case where minutes round to 60
+  if (m === 60) {
+      return `${String((h + 1) % 24).padStart(2, '0')}:00`;
+  }
+  
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+};
+
 export const calculateQuote = (
   inputs: QuoteInputs,
   vars: GlobalVariables,
@@ -18,9 +33,21 @@ export const calculateQuote = (
   let equipmentTotal = 0;
   let extraCostsTotal = 0;
 
-  // Use AI extracted distance if available
+  // --- WEIGHT CALCULATION (Structure + Ballast) ---
+  let numZavorre = 0;
+  let weightZavorre = 0;
+  
+  if (inputs.optZavorre && inputs.postiAuto > 0 && selectedBallast) {
+    numZavorre = 1 + Math.ceil(inputs.postiAuto / 2);
+    const bWeight = selectedBallast.peso_kg || 0;
+    weightZavorre = numZavorre * bWeight;
+  }
+
+  const structureWeight = (modelData.peso_struttura_per_posto || 0) * inputs.postiAuto;
+  const totalWeight = structureWeight + weightZavorre;
+
+  // --- LOGISTICS AI DATA ---
   const distanceKmOneWay = inputs.logistics.fetched ? inputs.logistics.distanceKm : 0;
-  // Determine duration based on mode
   let durationMinOneWay = inputs.logistics.fetched ? inputs.logistics.driveDurationMinutes : 0;
   
   if (inputs.usePublicTransport && inputs.logistics.fetched) {
@@ -43,19 +70,8 @@ export const calculateQuote = (
   // --- Helper: Public Transport Cost (A/R) ---
   const getPublicTransportCostPerPerson = (): number => {
       if (!inputs.logistics.fetched) return 0;
-      
-      // Select price based on user choice
-      let basePrice = 0;
-      if (inputs.publicTransportMode === 'plane') {
-          basePrice = inputs.logistics.planePrice;
-      } else {
-          basePrice = inputs.logistics.trainPrice;
-      }
-
-      // Add last mile (assumed per trip block, but simplest is add to ticket total)
+      let basePrice = inputs.publicTransportMode === 'plane' ? inputs.logistics.planePrice : inputs.logistics.trainPrice;
       const total = basePrice + inputs.logistics.lastMilePrice;
-      
-      // Fallback if AI returned 0 but recommended it
       return total > 0 ? total : 0;
   };
 
@@ -65,7 +81,31 @@ export const calculateQuote = (
   };
 
   // --- Helper: Travel Hours (A/R) ---
-  const travelHoursRoundTrip = (durationMinOneWay * 2) / 60; 
+  const travelHoursOneWay = durationMinOneWay / 60;
+  const travelHoursRoundTrip = travelHoursOneWay * 2; 
+
+  // ==========================================
+  // SCHEDULING LOGIC (Technicians)
+  // ==========================================
+  // Rule: Start 07:00 from HQ.
+  // Arrival = 7.0 + OneWayHours.
+  // If Arrival > 14:00 -> No work today. Day count +1.
+  // Return Deadline: 19:00.
+  // Assume work ends at 17:00 standard. If 17:00 + OneWay > 19:00 -> Extra Night Hotel.
+  
+  let extraNightForReturn = false;
+  let lostDayForTravel = false;
+  
+  const arrivalTime = 7.0 + travelHoursOneWay;
+  if (arrivalTime > 14.0) {
+      lostDayForTravel = true;
+  }
+
+  // Check return time (Assumed leaving site at 17:00)
+  const returnArrivalTime = 17.0 + travelHoursOneWay;
+  if (returnArrivalTime > 19.0) {
+      extraNightForReturn = true;
+  }
 
   // ==========================================
   // 1. Service: ASSISTENZA
@@ -76,89 +116,101 @@ export const calculateQuote = (
 
   if (inputs.serviceType === ServiceType.ASSISTENZA) {
     const numTechs = inputs.assistenzaTecniciCount;
-    const workHoursPerDay = vars.ore_lavoro_giornaliere_standard; 
-    totalWorkHours = inputs.assistenzaGiorni * workHoursPerDay * numTechs;
-    daysRequired = inputs.assistenzaGiorni;
+    const workHoursPerDay = vars.ore_lavoro_giornaliere_standard; // 8
     
+    // Pure working hours
+    totalWorkHours = inputs.assistenzaGiorni * workHoursPerDay * numTechs;
+    
+    // Days Calculation
+    daysRequired = inputs.assistenzaGiorni;
+    if (lostDayForTravel) {
+        daysRequired += 1; // Add 1 day for travel
+    }
+
     // Labor Cost (Internal)
     const laborSite = totalWorkHours * rateInternal;
     
-    // Travel Labor (Internal Techs get paid for travel)
-    let totalTravelHoursPaid = 0;
+    // Travel Labor Cost (Internal Techs get paid for travel)
+    // If lostDayForTravel, they are paid for travel time on that day too? Usually yes.
+    // Logic: Total Round Trips * Hours * Rate
     let numberOfRoundTrips = 0;
-
     if (isTrasferta) {
         numberOfRoundTrips = 1; 
-        if (inputs.assistenzaGiorni > 5) {
-             const extraTrips = Math.floor((inputs.assistenzaGiorni - 1) / 5);
+        if (daysRequired > 5) {
+             const extraTrips = Math.floor((daysRequired - 1) / 5);
              numberOfRoundTrips += extraTrips;
         }
     } else {
-        numberOfRoundTrips = inputs.assistenzaGiorni;
+        numberOfRoundTrips = daysRequired; // Commuting every day
     }
 
-    totalTravelHoursPaid = travelHoursRoundTrip * numberOfRoundTrips * numTechs;
+    const totalTravelHoursPaid = travelHoursRoundTrip * numberOfRoundTrips * numTechs;
     const laborTravel = totalTravelHoursPaid * rateInternal;
 
     internalCosts.push({ 
         label: 'Manodopera (Lavoro)', 
         value: laborSite, 
         details: `${totalWorkHours}h totali x €${rateInternal}`,
-        tooltip: `Logica: Ore Giornaliere (${workHoursPerDay}h) x Giorni (${inputs.assistenzaGiorni}) x Tecnici (${numTechs}) x Costo Orario (€${rateInternal})`
+        tooltip: `Logica: Ore Giornaliere (${workHoursPerDay}h) x Giorni Lavoro (${inputs.assistenzaGiorni}) x Tecnici.`
     });
     
     if (laborTravel > 0) {
         internalCosts.push({ 
             label: 'Manodopera (Viaggio A/R)', 
             value: laborTravel, 
-            details: `${totalTravelHoursPaid.toFixed(1)}h retribuite (${numberOfRoundTrips} viaggi x ${numTechs} tec)`,
-            tooltip: `Logica: Ore Viaggio A/R (${travelHoursRoundTrip.toFixed(1)}h) x N. Viaggi (${numberOfRoundTrips}) x N. Tecnici (${numTechs}) x Costo Orario (€${rateInternal}). I tecnici interni vengono pagati anche per le ore di guida.`
+            details: `${totalTravelHoursPaid.toFixed(1)}h retribuite`,
+            tooltip: 'Ore di viaggio retribuite per i tecnici interni.'
         });
     }
 
-    // Logistics Costs (Assistenza is usually Internal)
+    if (lostDayForTravel) {
+        internalCosts.push({
+            label: 'Supplemento Giorno Viaggio',
+            value: 0, // Cost is in Hotel/Diaria/LaborTravel, this is just info
+            details: `Arrivo h.${formatTime(arrivalTime)} (>14:00)`,
+            tooltip: 'Poiché l\'arrivo in cantiere è previsto dopo le 14:00, il primo giorno è considerato solo viaggio.'
+        });
+    }
+
+    // Logistics Costs
     if (inputs.usePublicTransport && inputs.logistics.fetched) {
        const ticketCost = getPublicTransportCostPerPerson() * numTechs * numberOfRoundTrips;
-       const modeLabel = inputs.publicTransportMode === 'plane' ? 'Aereo' : 'Treno';
        internalCosts.push({ 
-           label: `Biglietti ${modeLabel} + Last Mile`, 
+           label: 'Biglietti Viaggio + Last Mile', 
            value: ticketCost, 
-           details: `${getSplitCostString(ticketCost)}`,
-           tooltip: `Logica: Prezzo A/R medio rilevato (${getPublicTransportCostPerPerson().toFixed(2)}€/persona) x ${numTechs} Tecnici.`
+           details: getSplitCostString(ticketCost)
        });
        
-       const localTransport = 20 * inputs.assistenzaGiorni;
-       internalCosts.push({ 
-           label: 'Trasporti Locali (Taxi/Bus)', 
-           value: localTransport,
-           tooltip: `Logica: Forfait spostamenti in loco: 20€/giorno x ${inputs.assistenzaGiorni} giorni.`
-       });
+       const localTransport = 20 * daysRequired;
+       internalCosts.push({ label: 'Trasporti Locali', value: localTransport });
 
-       let hotelTotal = 0;
-       if (isTrasferta || inputs.assistenzaGiorni > 1) {
-           const actualNights = Math.max(0, inputs.assistenzaGiorni - 1);
-           hotelTotal = actualNights * numTechs * hotelCostPerNight;
-           if (hotelTotal > 0) internalCosts.push({ 
+       // Hotels
+       let hotelNights = 0;
+       if (isTrasferta || daysRequired > 1) {
+           hotelNights = Math.max(0, daysRequired - 1);
+       }
+       if (extraNightForReturn) {
+           hotelNights += 1;
+       }
+       
+       const hotelTotal = hotelNights * numTechs * hotelCostPerNight;
+       if (hotelTotal > 0) {
+           internalCosts.push({ 
                label: 'Hotel & Alloggio', 
                value: hotelTotal, 
-               details: `${actualNights} notti`,
-               tooltip: `Logica: Prezzo medio Hotel (${hotelCostPerNight}€) x Notti (${actualNights}) x Tecnici (${numTechs}). Fonte AI o default.`
+               details: `${hotelNights} notti totali`,
+               tooltip: extraNightForReturn ? 'Include 1 notte extra per rientro previsto dopo le 19:00.' : ''
            });
        }
        
-       const diaria = numTechs * vars.diaria_squadra_interna * inputs.assistenzaGiorni;
-       internalCosts.push({ 
-           label: 'Diarie Tecnici', 
-           value: diaria,
-           tooltip: `Logica: Diaria (${vars.diaria_squadra_interna}€) x Giorni (${inputs.assistenzaGiorni}) x Tecnici (${numTechs}).`
-       });
+       const diaria = numTechs * vars.diaria_squadra_interna * daysRequired;
+       internalCosts.push({ label: 'Diarie Tecnici', value: diaria });
 
     } else {
         // Nostro Mezzo
         const tripDistance = distanceKmOneWay * 2;
-        let totalKm = 0;
-        totalKm += (tripDistance * numberOfRoundTrips);
-        if (isTrasferta) totalKm += (inputs.assistenzaGiorni * 30); 
+        let totalKm = (tripDistance * numberOfRoundTrips);
+        if (isTrasferta) totalKm += (daysRequired * 30); 
 
         const fuelCost = (totalKm / vars.km_per_litro_furgone) * vars.costo_medio_gasolio_euro_litro;
         const wearCost = totalKm * vars.costo_usura_mezzo_euro_km;
@@ -170,41 +222,23 @@ export const calculateQuote = (
             ferryTotal = inputs.logistics.ferryCostVan * numberOfRoundTrips;
         }
 
-        internalCosts.push({ 
-            label: 'Carburante Furgone', 
-            value: fuelCost, 
-            details: `${totalKm.toFixed(0)} km stima`,
-            tooltip: `Logica: Km Totali (${totalKm.toFixed(0)}) / Km/Litro (${vars.km_per_litro_furgone}) * Costo Diesel (${vars.costo_medio_gasolio_euro_litro}€).`
-        });
-        internalCosts.push({ 
-            label: 'Usura & Pedaggi', 
-            value: wearCost + tollsCost,
-            tooltip: `Logica: Usura (${vars.costo_usura_mezzo_euro_km}€/km) + Pedaggi stima (0.12€/km) x Km Totali.`
-        });
-        
-        if (ferryTotal > 0) {
-            internalCosts.push({ 
-                label: 'Traghetti Furgone (A/R)', 
-                value: ferryTotal,
-                details: getSplitCostString(ferryTotal),
-                tooltip: `Logica: Costo Traghetto Furgone rilevato AI (${inputs.logistics.ferryCostVan}€) x Numero Viaggi.`
-            });
-        }
+        internalCosts.push({ label: 'Carburante Furgone', value: fuelCost, details: `${totalKm.toFixed(0)} km stima` });
+        internalCosts.push({ label: 'Usura & Pedaggi', value: wearCost + tollsCost });
+        if (ferryTotal > 0) internalCosts.push({ label: 'Traghetti Furgone', value: ferryTotal });
 
         if (isTrasferta) {
-             const diaria = numTechs * vars.diaria_squadra_interna * inputs.assistenzaGiorni;
-             internalCosts.push({ 
-                 label: 'Diarie Tecnici', 
-                 value: diaria,
-                 tooltip: `Logica: Diaria (${vars.diaria_squadra_interna}€) x Giorni (${inputs.assistenzaGiorni}) x Tecnici (${numTechs}).`
-             });
+             const diaria = numTechs * vars.diaria_squadra_interna * daysRequired;
+             internalCosts.push({ label: 'Diarie Tecnici', value: diaria });
              
-             const nights = Math.max(0, inputs.assistenzaGiorni - 1);
-             const hotelC = nights * numTechs * hotelCostPerNight;
-             if (hotelC > 0) internalCosts.push({ 
-                 label: 'Hotel & Alloggio', 
+             let hotelNights = Math.max(0, daysRequired - 1);
+             if (extraNightForReturn) hotelNights += 1;
+
+             const hotelC = hotelNights * numTechs * hotelCostPerNight;
+             if(hotelC > 0) internalCosts.push({ 
+                 label: 'Hotel Squadra', 
                  value: hotelC,
-                 tooltip: `Logica: Prezzo Hotel (${hotelCostPerNight}€) x Notti (${nights}) x Tecnici (${numTechs}).`
+                 details: `${hotelNights} notti`,
+                 tooltip: extraNightForReturn ? 'Include 1 notte extra per rientro previsto dopo le 19:00.' : ''
              });
         }
     }
@@ -214,7 +248,7 @@ export const calculateQuote = (
   // 2. Service: INSTALLAZIONE COMPLETA
   // ==========================================
   if (inputs.serviceType === ServiceType.INSTALLAZIONE_COMPLETA) {
-      // A. Work Hours Calculation
+      // Work Hours Calculation
       let baseHoursPerSpot = modelData.ore_struttura_per_posto;
       if (inputs.optPannelliFotovoltaici) baseHoursPerSpot += modelData.ore_pv_per_posto;
       if (inputs.optIlluminazioneLED) baseHoursPerSpot += modelData.ore_led_per_posto;
@@ -223,7 +257,7 @@ export const calculateQuote = (
       
       totalWorkHours = baseHoursPerSpot * inputs.postiAuto;
 
-      // B. Discounts on Hours
+      // Discounts on Hours
       const discount = vars.hourly_discounts.find(d => inputs.postiAuto > d.threshold);
       if (discount) {
           discountAppliedPerc = discount.percentage;
@@ -231,15 +265,21 @@ export const calculateQuote = (
           totalWorkHours = totalWorkHours * discountFactor;
       }
 
-      // C. Days Required
+      // Techs
       const internalTechs = inputs.useInternalTechs ? inputs.numInternalTechs : 0;
       const externalTechs = inputs.useExternalTechs ? inputs.numExternalTechs : 0;
       const totalTechs = internalTechs + externalTechs;
 
       const dailyHoursAvailable = vars.ore_lavoro_giornaliere_standard * totalTechs;
-      daysRequired = totalTechs > 0 ? Math.ceil(totalWorkHours / dailyHoursAvailable) : 0;
+      const workDaysRequired = totalTechs > 0 ? Math.ceil(totalWorkHours / dailyHoursAvailable) : 0;
+      
+      // Apply Schedule Logic
+      daysRequired = workDaysRequired;
+      if (lostDayForTravel) {
+          daysRequired += 1;
+      }
 
-      // D. Labor Cost (Separated)
+      // Labor Cost
       if (totalTechs > 0) {
           const internalRatio = internalTechs / totalTechs;
           const externalRatio = externalTechs / totalTechs;
@@ -251,8 +291,7 @@ export const calculateQuote = (
                  label: 'Manodopera Cantiere', 
                  value: laborSite, 
                  details: `${(totalWorkHours * internalRatio).toFixed(1)}h x €${rateInternal}`, 
-                 isBold: true,
-                 tooltip: `Logica: Ore Totali (${totalWorkHours.toFixed(1)}) divise pro-quota interna (${(internalRatio*100).toFixed(0)}%) x Costo Orario (€${rateInternal}).`
+                 isBold: true
              });
 
              // Travel Labor (Internal Only)
@@ -269,46 +308,43 @@ export const calculateQuote = (
                 internalCosts.push({ 
                     label: 'Ore Viaggio Retribuite', 
                     value: laborTravel,
-                    details: `${getSplitCostString(laborTravel)}`,
-                    tooltip: `Logica: Durata Viaggio A/R (${travelHoursRoundTrip.toFixed(1)}h) x N. Viaggi (${trips}) x N. Tecnici (${internalTechs}) x Costo Orario (€${rateInternal}). I tecnici vengono pagati per guidare.`
+                    details: `${getSplitCostString(laborTravel)}`
                 });
+             }
+
+             if (lostDayForTravel) {
+                 internalCosts.push({
+                    label: 'Info: Giorno Viaggio',
+                    value: 0,
+                    details: 'Arrivo previsto > 14:00',
+                    tooltip: 'Primo giorno dedicato al viaggio, lavoro inizia il giorno successivo.'
+                 });
              }
 
              // Logistics Internal
              if (inputs.usePublicTransport && inputs.logistics.fetched) {
                 const ticketCost = getPublicTransportCostPerPerson() * internalTechs;
-                const modeLabel = inputs.publicTransportMode === 'plane' ? 'Aereo' : 'Treno';
-                internalCosts.push({ 
-                    label: `Biglietti ${modeLabel} (A/R)`, 
-                    value: ticketCost,
-                    details: `${getSplitCostString(ticketCost)}`,
-                    tooltip: `Logica: Costo Biglietto A/R rilevato AI x ${internalTechs} Tecnici. Include Last Mile.`
-                });
+                internalCosts.push({ label: 'Biglietti Mezzi (A/R)', value: ticketCost });
                 
                 const localTrans = 20 * daysRequired;
-                internalCosts.push({ 
-                    label: 'Trasporti Locali', 
-                    value: localTrans,
-                    tooltip: `Logica: Forfait 20€/giorno per taxi/bus locale.`
-                });
+                internalCosts.push({ label: 'Trasporti Locali', value: localTrans });
 
-                const nights = Math.max(0, daysRequired - 1); 
-                const hotelCost = nights * internalTechs * hotelCostPerNight;
+                let hotelNights = Math.max(0, daysRequired - 1);
+                if (extraNightForReturn) hotelNights += 1;
+
+                const hotelCost = hotelNights * internalTechs * hotelCostPerNight;
                 if (hotelCost > 0) internalCosts.push({ 
                     label: 'Hotel Squadra', 
                     value: hotelCost,
-                    tooltip: `Logica: Prezzo Hotel (${hotelCostPerNight}€) x Notti (${nights}) x Tecnici (${internalTechs}).`
+                    details: `${hotelNights} notti`,
+                    tooltip: extraNightForReturn ? 'Include 1 notte extra per rientro tardivo (>19:00)' : ''
                 });
 
                 const diaria = internalTechs * vars.diaria_squadra_interna * daysRequired;
-                internalCosts.push({ 
-                    label: 'Diaria', 
-                    value: diaria,
-                    tooltip: `Logica: Diaria giornaliera (${vars.diaria_squadra_interna}€) x Giorni x Tecnici.`
-                });
+                internalCosts.push({ label: 'Diaria', value: diaria });
 
              } else {
-                // Nostro Mezzo (Calculated for Internal Team Van)
+                // Nostro Mezzo (TECNICI)
                 const tripDistance = distanceKmOneWay * 2;
                 let totalKm = 0;
                 if (isTrasferta) {
@@ -329,47 +365,28 @@ export const calculateQuote = (
                 // Ferry
                 let ferryTotal = 0;
                 if (inputs.logistics.isIsland && inputs.logistics.ferryCostVan > 0) {
-                     // Assume 1 trip (or more if long job)
                      const nTrips = isTrasferta ? 1 : daysRequired;
                      ferryTotal = inputs.logistics.ferryCostVan * nTrips;
                 }
 
-                internalCosts.push({ 
-                    label: 'Carburante Furgone', 
-                    value: fuelCost, 
-                    details: `${totalKm.toFixed(0)}km totali`,
-                    tooltip: `Logica: Km stimati (${totalKm.toFixed(0)}) / Consumo (${vars.km_per_litro_furgone} km/l) * Prezzo Diesel.`
-                });
-                internalCosts.push({ 
-                    label: 'Usura & Pedaggi', 
-                    value: wearCost + tollsCost,
-                    tooltip: `Logica: Usura veicolo (${vars.costo_usura_mezzo_euro_km}€/km) + Pedaggi autostradali.`
-                });
-
-                if (ferryTotal > 0) {
-                    internalCosts.push({ 
-                        label: 'Traghetti Furgone (A/R)', 
-                        value: ferryTotal,
-                        details: getSplitCostString(ferryTotal),
-                        tooltip: `Logica: Costo Traghetto Furgone rilevato AI (${inputs.logistics.ferryCostVan}€) x Viaggi.`
-                    });
-                }
+                internalCosts.push({ label: 'Carburante Furgone', value: fuelCost });
+                internalCosts.push({ label: 'Usura & Pedaggi', value: wearCost + tollsCost });
+                if (ferryTotal > 0) internalCosts.push({ label: 'Traghetti Furgone', value: ferryTotal });
 
                 if (isTrasferta) {
-                    const nights = Math.max(0, daysRequired - 1);
-                    const hotelCost = nights * internalTechs * hotelCostPerNight;
+                    let hotelNights = Math.max(0, daysRequired - 1);
+                    if (extraNightForReturn) hotelNights += 1;
+
+                    const hotelCost = hotelNights * internalTechs * hotelCostPerNight;
                     if(hotelCost > 0) internalCosts.push({ 
                         label: 'Hotel Squadra', 
                         value: hotelCost,
-                        tooltip: `Logica: Costo Hotel (${hotelCostPerNight}€) x Notti (${nights}) x Tecnici (${internalTechs}).`
+                        details: `${hotelNights} notti`,
+                        tooltip: extraNightForReturn ? 'Include 1 notte extra per rientro tardivo (>19:00)' : ''
                     });
 
                     const diaria = internalTechs * vars.diaria_squadra_interna * daysRequired;
-                    internalCosts.push({ 
-                        label: 'Diaria', 
-                        value: diaria,
-                        tooltip: `Logica: Diaria (${vars.diaria_squadra_interna}€) x Giorni (${daysRequired}) x Tecnici.`
-                    });
+                    internalCosts.push({ label: 'Diaria', value: diaria });
                 }
              }
           }
@@ -381,12 +398,15 @@ export const calculateQuote = (
                  label: 'Manodopera Esterna', 
                  value: laborSite, 
                  details: `${(totalWorkHours * externalRatio).toFixed(1)}h x €${rateExternal}`, 
-                 isBold: true,
-                 tooltip: `Logica: Ore Totali pro-quota esterna x Costo Orario Esterno (€${rateExternal}). Include margine azienda. NESSUN rimborso extra.`
+                 isBold: true
              });
              
-             // STRICTLY NO EXTRA COSTS FOR EXTERNAL TEAM AS REQUESTED
-             // "La squadra esterna NON ha diritto a hotel e rimborso viaggio di alcun tipo. L'unica paga a cui ha diritto è quella oraria."
+             const diariaExt = externalTechs * vars.diaria_squadra_esterna * daysRequired;
+             externalCosts.push({ 
+                 label: 'Diaria Esterna', 
+                 value: diariaExt, 
+                 details: `${daysRequired} gg x ${externalTechs} tec`
+             });
           }
       }
   }
@@ -421,30 +441,20 @@ export const calculateQuote = (
   // MATERIAL TRANSPORT
   // ==========================================
   
-  // LOGIC CHANGE: If using Public Transport, User requested "NON mettere nel preventivo i costi di bilico, camion con gru o altro".
-  // Only calculate material transport if using "Nostro Mezzo" (implies standard truck logistics) or explicitly forced.
-  // We will assume "Mezzi Pubblici" means no Heavy Transport charged on this quote.
-
   let transportMethod = 'Non Definito';
   let shippingCost = 0;
   let unloadingSurcharge = 0;
   let ferryExtra = 0;
 
-  if (!inputs.usePublicTransport) {
-      
-      let numZavorre = 0;
-      let weightZavorre = 0;
-      
-      if (inputs.optZavorre && inputs.postiAuto > 0 && selectedBallast) {
-        numZavorre = 1 + Math.ceil(inputs.postiAuto / 2);
-        const bWeight = selectedBallast.peso_kg || 0;
-        weightZavorre = numZavorre * bWeight;
-      }
+  // IF ASSISTENZA -> NO MATERIAL TRANSPORT
+  if (inputs.serviceType === ServiceType.ASSISTENZA) {
+      transportMethod = 'Non Richiesto (Assistenza)';
+      transportTotal = 0;
+      // Do not populate generalLogistics with transport items
+  } else {
+      // IF INSTALLAZIONE -> CALCULATE MATERIAL TRANSPORT ALWAYS
+      // (Even if Techs go by Public Transport, the Material must arrive by Truck/Van)
 
-      const structureWeight = modelData.peso_struttura_per_posto * inputs.postiAuto;
-      const totalWeight = structureWeight + weightZavorre;
-
-      // Rate Lookup
       const cleanDest = inputs.indirizzoCompleto.trim().toLowerCase(); 
       const rate = transportRates.find(r => 
         cleanDest.includes(r.provincia.toLowerCase()) || 
@@ -479,34 +489,58 @@ export const calculateQuote = (
           return 0;
       };
 
-      // 1. Furgone Aziendale (Material)
+      // 1. Furgone Aziendale / Dedicato (Material)
       if (totalWeight < LIMIT_FURGONE && !inputs.optZavorre && inputs.postiAuto <= 3) {
-          transportMethod = 'Furgone Aziendale (Nostro Mezzo)';
+          
           const dist = distanceKmOneWay * 2; 
           const fuel = (dist / vars.km_per_litro_furgone) * vars.costo_medio_gasolio_euro_litro;
           const wear = dist * vars.costo_usura_mezzo_euro_km;
           const tolls = dist * 0.12;
-          const driverLogistics = isTrasferta ? (vars.diaria_squadra_interna + hotelCostPerNight) : 0;
           
-          shippingCost = fuel + wear + tolls + driverLogistics;
-
-          // Note: Ferry for this furgone is likely same as team furgone if they travel together?
-          // If Internal Team is present, they take the van. 
-          // If only shipping, we need to add ferry.
-          // To avoid double counting, if internal team exists, this "Material Transport" cost is duplicative of their travel cost?
-          // Usually separate "Material Transport" implies a dedicated delivery trip if the team can't carry it.
-          // Given logic, we sum it up. 
           if (inputs.logistics.isIsland && inputs.logistics.ferryCostVan > 0) {
              ferryExtra = inputs.logistics.ferryCostVan;
           }
 
-          generalLogistics.push({ 
-              label: 'Trasporto Materiale (Furgone)', 
-              value: shippingCost + ferryExtra, 
-              details: 'Carburante + Autista dedicato' + (ferryExtra ? ' + Traghetto' : ''), 
-              isBold: true,
-              tooltip: `Logica: Peso materiale (${totalWeight}kg) < 1000kg. Costo viaggio furgone + eventuale trasferta autista.`
-          });
+          if (inputs.usePublicTransport) {
+              // TECHS ARE ON TRAIN. VAN IS DEDICATED SHIPPING (Driver must be paid/accounted or courier)
+              transportMethod = 'Spedizione Dedicata (Furgone)';
+              // Assume a driver cost is needed since techs are not driving it.
+              // Let's approximate a dedicated driver cost as 1 day labor + expenses
+              const dedicatedDriverCost = 250; // Flat fee for dedicated driver or courier markup
+              
+              shippingCost = fuel + wear + tolls + dedicatedDriverCost;
+
+              generalLogistics.push({ 
+                  label: 'Spedizione Dedicata (Materiale)', 
+                  value: shippingCost + ferryExtra, 
+                  details: 'Furgone Dedicato (Materiale separato dai tecnici)', 
+                  isBold: true
+              });
+
+          } else {
+              // TECHS DRIVE THE VAN.
+              // Fuel/Wear is cost of the van.
+              // Driver cost is NOT added here because it's already in 'internalCosts' (Labor + Diaria).
+              // We only list the Vehicle running costs here.
+              transportMethod = 'Furgone Aziendale (Materiale con Squadra)';
+              shippingCost = 0; // The vehicle costs are listed under Internal Team to avoid splitting logic weirdly in UI
+              
+              // However, we want to show it in the breakdown.
+              // To match user expectation: "Carburante" shows under Internal Team.
+              // Here we just show a note or 0 cost with explanation.
+              generalLogistics.push({
+                  label: 'Trasporto Materiale (Furgone)',
+                  value: 0,
+                  details: 'Incluso in Furgone Squadra (Vedi sopra)',
+                  isBold: true
+              });
+          }
+
+          if (ferryExtra > 0 && inputs.usePublicTransport) {
+               // Only add ferry here if dedicated. If team drives, it's added in internalCosts
+               generalLogistics.push({ label: 'Traghetto Spedizione', value: ferryExtra });
+               shippingCost += ferryExtra;
+          }
       }
       // 2. Camion con Gru
       else if (totalWeight <= LIMIT_GRU) {
@@ -514,43 +548,68 @@ export const calculateQuote = (
           if (baseCost === 0) baseCost = 1300; 
 
           transportMethod = 'Camion con Gru (Autoscarico)';
-          unloadingSurcharge = 100; // una tantum
+          unloadingSurcharge = 100; 
+          
+          let ballastExtraCost = 0;
+          if (numZavorre > 0) {
+              // 20 mins per ballast
+              const minutesBallast = numZavorre * 20;
+              // Round up to nearest hour
+              const hoursExtra = Math.ceil(minutesBallast / 60);
+              ballastExtraCost = hoursExtra * 100;
+          }
 
-          // For Camion Gru: Cost + Diaria Driver + Hotel Driver (if Trasferta)
-          let driverExtra = 0;
-          if (isTrasferta) {
-              driverExtra = vars.diaria_squadra_interna + hotelCostPerNight;
-          } else {
-              driverExtra = vars.diaria_squadra_interna; 
+          // Truck Schedule Check
+          // Start 06:00.
+          // Unload Time = 1h fixed + Ballast Time.
+          const unloadTimeHours = 1 + (numZavorre * 20 / 60);
+          
+          const totalMissionHours = (travelHoursOneWay * 2) + unloadTimeHours;
+          const truckReturnTime = 6.0 + totalMissionHours;
+          
+          let truckDriverHotel = 0;
+          let truckDriverDiaria = vars.diaria_squadra_interna; // Base daily pay for driver
+
+          if (truckReturnTime > 19.0) {
+              truckDriverHotel = hotelCostPerNight;
+              truckDriverDiaria += vars.diaria_squadra_interna;
           }
 
           if (inputs.logistics.isIsland && inputs.logistics.ferryCostTruck > 0) {
              ferryExtra = inputs.logistics.ferryCostTruck;
           }
 
-          shippingCost = baseCost + driverExtra + ferryExtra;
+          shippingCost = baseCost + truckDriverDiaria + truckDriverHotel + ferryExtra + ballastExtraCost;
           
           generalLogistics.push({ 
               label: 'Nolo Camion Gru', 
-              value: baseCost,
-              tooltip: `Logica: Tariffa regione/provincia per Camion Gru (${baseCost}€).`
+              value: baseCost
           });
           generalLogistics.push({ 
-              label: 'Supplemento Scarico Gru', 
+              label: 'Supplemento Scarico Gru (Base)', 
               value: unloadingSurcharge,
-              tooltip: `Logica: Supplemento fisso per operazione di scarico con gru.`
           });
+          
+          if (ballastExtraCost > 0) {
+              generalLogistics.push({ 
+                  label: 'Supplemento Scarico Zavorre', 
+                  value: ballastExtraCost,
+                  details: `${numZavorre} zavorre (${(numZavorre*20)} min) -> ${Math.ceil((numZavorre*20)/60)}h extra`,
+                  tooltip: '100€ per ogni ora aggiuntiva (20 min/zavorra)'
+              });
+          }
+
           generalLogistics.push({ 
-              label: 'Logistica Autista Gru (Diaria/Hotel)', 
-              value: driverExtra,
-              tooltip: `Logica: Diaria Autista + eventuale Hotel se in trasferta.`
+              label: 'Logistica Autista Gru', 
+              value: truckDriverDiaria + truckDriverHotel,
+              details: truckDriverHotel > 0 ? 'Diaria + Hotel (Rientro > 19:00)' : 'Diaria Giornaliera',
+              tooltip: `Partenza 06:00. Rientro stimato ore ${formatTime(truckReturnTime)}.`
           });
+
           if (ferryExtra > 0) {
              generalLogistics.push({ 
                  label: 'Traghetto Camion (A/R)', 
-                 value: ferryExtra,
-                 details: getSplitCostString(ferryExtra),
-                 tooltip: `Logica: Costo Traghetto Bilico/Camion rilevato AI.`
+                 value: ferryExtra
              });
           }
       }
@@ -572,30 +631,18 @@ export const calculateQuote = (
           generalLogistics.push({ 
               label: `Trasporto ${transportMethod}`, 
               value: shippingCost - ferryExtra, // Base cost
-              isBold: true,
-              tooltip: `Logica: Tariffa Bilico (${baseCost}€) x Numero Mezzi (${numTrucks}). Include tutto.`
+              isBold: true
           });
 
           if (ferryExtra > 0) {
              generalLogistics.push({ 
                  label: 'Traghetto Bilico (A/R)', 
-                 value: ferryExtra,
-                 details: getSplitCostString(ferryExtra),
-                 tooltip: `Logica: Costo Traghetto Bilico rilevato AI x Numero Mezzi.`
+                 value: ferryExtra
              });
           }
       }
 
       transportTotal = shippingCost + unloadingSurcharge;
-  } else {
-      // Mezzi Pubblici selected -> No Material Transport Costs
-      transportMethod = 'Trasporto Materiali Escluso (Viaggio Mezzi Pubblici)';
-      generalLogistics.push({
-          label: 'Trasporto Materiali',
-          value: 0,
-          details: 'Non calcolato (Opzione Mezzi Pubblici attiva)',
-          tooltip: 'Hai selezionato Mezzi Pubblici per la squadra. Come da richiesta, i costi di Bilico/Gru sono stati esclusi da questo preventivo.'
-      });
   }
 
   // Aggregate totals
@@ -615,14 +662,14 @@ export const calculateQuote = (
     equipmentTotal,
     extraCostsTotal,
     transportMethod,
-    totalWeight: 0, // Not relevant for display if simplified
+    totalWeight: totalWeight, // Expose total weight
     totalHours: totalWorkHours,
     totalDays: daysRequired,
     internalTeamCosts: internalCosts,
     externalTeamCosts: externalCosts,
     generalLogisticsCosts: generalLogistics,
-    numZavorre: 0,
-    weightZavorre: 0,
+    numZavorre: numZavorre,
+    weightZavorre: weightZavorre,
     discountAppliedPerc
   };
 };

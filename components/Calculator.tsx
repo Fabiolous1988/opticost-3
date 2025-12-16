@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Calculator as CalcIcon, Truck, Users, Hammer, FileDown, Search, MapPin, Building, TrainFront, Box, Plane, CreditCard, Calendar, Weight, AlertCircle, Anchor, RotateCcw, KeyRound, Plus, Trash2, HelpCircle, ExternalLink } from 'lucide-react';
+import { Settings, Calculator as CalcIcon, Truck, Users, Hammer, FileDown, Search, MapPin, Building, TrainFront, Box, Plane, CreditCard, Calendar, Weight, AlertCircle, Anchor, RotateCcw, KeyRound, Plus, Trash2, HelpCircle, ExternalLink, Coins } from 'lucide-react';
 import { GlobalVariables, TransportRate, QuoteInputs, ServiceType, ModelData, BallastData, CustomExtraCost } from '../types';
 import { calculateQuote } from '../services/calculationService';
 import { fetchLogisticsFromAI } from '../services/aiService';
@@ -12,6 +12,7 @@ interface Props {
   models: ModelData[];
   ballasts: BallastData[];
   apiKey: string;
+  onHardReset: () => void;
 }
 
 // Tooltip Component
@@ -27,8 +28,9 @@ const InfoTooltip: React.FC<{ text: string }> = ({ text }) => {
   );
 };
 
-const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSettings, onOpenApiKeySettings, models, ballasts, apiKey }) => {
+const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSettings, onOpenApiKeySettings, models, ballasts, apiKey, onHardReset }) => {
   
+  // Helper to generate a fresh initial state
   const getInitialState = (): QuoteInputs => {
       // Default date logic: Today + 15 days
       const defaultDate = new Date();
@@ -56,8 +58,9 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
             fetched: false
         },
         extraCosts: [],
+        // Default to first model/ballast if available, otherwise empty string
         modello: models.length > 0 ? models[0].nome : '',
-        postiAuto: 2,
+        postiAuto: 2, // Reset to standard minimum
         useInternalTechs: true,
         numInternalTechs: 2,
         useExternalTechs: false,
@@ -85,16 +88,21 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
   const [newExtraLabel, setNewExtraLabel] = useState('');
   const [newExtraValue, setNewExtraValue] = useState('');
 
+  // Flag to prevent infinite loop of auto-setting forklift
+  const [forkliftAutoSet, setForkliftAutoSet] = useState(false);
+
+  // Effect: When models/ballasts load, ensure defaults are set if inputs are empty
   useEffect(() => {
-    // Only set defaults on mount if they are empty, but don't overwrite user changes
+    // Only set if we haven't selected anything yet (empty string)
     if (models.length > 0 && !inputs.modello) {
       setInputs(prev => ({ ...prev, modello: models[0].nome }));
     }
     if (ballasts.length > 0 && !inputs.tipoZavorraNome) {
        setInputs(prev => ({ ...prev, tipoZavorraNome: ballasts[0].nome }));
     }
-  }, [models, ballasts]);
+  }, [models, ballasts]); // Don't depend on inputs.modello to avoid overwrite on every change
 
+  // Main Calculation Effect
   useEffect(() => {
     const selectedModel = models.find(m => m.nome === inputs.modello) || models[0];
     const selectedBallast = ballasts.find(b => b.nome === inputs.tipoZavorraNome) || ballasts[0];
@@ -102,25 +110,27 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
     if (selectedModel) {
       const res = calculateQuote(inputs, globalVars, transportRates, selectedModel, selectedBallast);
       setResult(res);
+
+      // Auto-Disable Forklift Rental if Truck with Crane is used for Ballasts
+      if (res.transportMethod.includes('Gru') && inputs.optZavorre && !inputs.clientHasForklift && !forkliftAutoSet) {
+          setInputs(prev => ({ ...prev, clientHasForklift: true }));
+          setForkliftAutoSet(true); 
+      }
+      
+      if (!res.transportMethod.includes('Gru') || !inputs.optZavorre) {
+          setForkliftAutoSet(false);
+      }
     }
-  }, [inputs, globalVars, transportRates, models, ballasts]);
+  }, [inputs, globalVars, transportRates, models, ballasts, forkliftAutoSet]);
 
   const handleInputChange = (field: keyof QuoteInputs, value: any) => {
     setInputs(prev => ({ ...prev, [field]: value }));
   };
 
-  const handleReset = () => {
-      if (window.confirm("Sei sicuro di voler azzerare tutti i campi e iniziare un nuovo preventivo?")) {
-        const initialState = getInitialState();
-        // Ensure we preserve model/ballast defaults if loaded
-        if (models.length > 0) initialState.modello = models[0].nome;
-        if (ballasts.length > 0) initialState.tipoZavorraNome = ballasts[0].nome;
-        
-        setInputs(initialState);
-        setResult(null);
-        setAnalysisError(null);
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }
+  const handleReset = (e: React.MouseEvent) => {
+      e.preventDefault();
+      onHardReset(); 
+      window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleAnalyzeAddress = async () => {
@@ -177,6 +187,10 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
   const currentBallast = ballasts.find(b => b.nome === inputs.tipoZavorraNome);
   const calculatedBallasts = inputs.optZavorre ? (1 + Math.ceil(inputs.postiAuto / 2)) : 0;
   const calculatedBallastWeight = currentBallast ? (calculatedBallasts * currentBallast.peso_kg) : 0;
+  
+  // Model Weight Calc
+  const currentModel = models.find(m => m.nome === inputs.modello);
+  const calculatedStructureWeight = currentModel ? (currentModel.peso_struttura_per_posto * inputs.postiAuto) : 0;
 
   // Formatting helpers
   const formatSplitPrice = (total: number) => {
@@ -222,6 +236,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
         </div>
         <div className="flex gap-2">
             <button 
+                type="button"
                 onClick={handleReset}
                 className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100 mr-2"
               >
@@ -229,6 +244,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                  Azzera
             </button>
             <button 
+              type="button"
               onClick={onOpenApiKeySettings}
               className="flex items-center gap-2 px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors border border-transparent hover:border-slate-200"
             >
@@ -236,6 +252,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
               API Key
             </button>
             <button 
+              type="button"
               onClick={onOpenSettings}
               className="flex items-center gap-2 px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors border border-transparent hover:border-slate-200"
             >
@@ -258,21 +275,23 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
             </h2>
             <div className="flex gap-4">
               <button 
+                type="button"
                 onClick={() => handleInputChange('serviceType', ServiceType.INSTALLAZIONE_COMPLETA)}
                 className={`flex-1 py-3 px-4 rounded-lg border-2 font-medium transition-all ${
                   inputs.serviceType === ServiceType.INSTALLAZIONE_COMPLETA 
                   ? 'border-blue-600 bg-blue-50 text-blue-700' 
-                  : 'border-slate-200 hover:border-slate-300 text-slate-600'
+                  : 'border-slate-200 hover:border-slate-300 text-slate-600 bg-white'
                 }`}
               >
                 Installazione Completa
               </button>
               <button 
+                type="button"
                 onClick={() => handleInputChange('serviceType', ServiceType.ASSISTENZA)}
                 className={`flex-1 py-3 px-4 rounded-lg border-2 font-medium transition-all ${
                   inputs.serviceType === ServiceType.ASSISTENZA 
                   ? 'border-blue-600 bg-blue-50 text-blue-700' 
-                  : 'border-slate-200 hover:border-slate-300 text-slate-600'
+                  : 'border-slate-200 hover:border-slate-300 text-slate-600 bg-white'
                 }`}
               >
                 Assistenza Tecnici
@@ -297,7 +316,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                  type="date"
                  value={inputs.startDate}
                  onChange={(e) => handleInputChange('startDate', e.target.value)}
-                 className="border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                 className="bg-white text-slate-900 border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                />
             </div>
             
@@ -312,11 +331,12 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                       value={inputs.indirizzoCompleto}
                       onChange={(e) => handleInputChange('indirizzoCompleto', e.target.value)}
                       placeholder="Es: Corso Milano 15, Padova"
-                      className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      className="w-full bg-white text-slate-900 border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     />
                 </div>
                 <div className="flex items-end">
                     <button 
+                        type="button"
                         onClick={handleAnalyzeAddress}
                         disabled={analyzing || !inputs.indirizzoCompleto}
                         className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:bg-slate-300 transition-colors h-[42px] flex items-center gap-2"
@@ -347,12 +367,14 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                 </span>
                 <div className="flex bg-white rounded-lg p-1 border border-slate-200">
                     <button 
+                        type="button"
                         onClick={() => handleInputChange('usePublicTransport', false)}
                         className={`px-3 py-1 rounded text-sm font-medium transition-all ${!inputs.usePublicTransport ? 'bg-slate-100 shadow-inner text-blue-700' : 'text-slate-500 hover:text-slate-700'}`}
                     >
                         <div className="flex items-center gap-1"><Truck size={14}/> Nostro Mezzo</div>
                     </button>
                     <button 
+                        type="button"
                         onClick={() => handleInputChange('usePublicTransport', true)}
                         className={`px-3 py-1 rounded text-sm font-medium transition-all ${inputs.usePublicTransport ? 'bg-slate-100 shadow-inner text-blue-700' : 'text-slate-500 hover:text-slate-700'}`}
                     >
@@ -364,7 +386,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
              {/* Manual Extra Costs (Dynamic) */}
              <div>
                <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-1">
-                  <Anchor size={14} /> Costi Extra (Es. Pedaggi ZTL speciali)
+                  <Coins size={14} /> Costi Extra (Es. Pedaggi ZTL speciali)
                   <InfoTooltip text="Aggiungi manualmente costi non previsti. I traghetti vengono calcolati automaticamente se necessari." />
                </label>
                
@@ -376,7 +398,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                                <span className="text-slate-700">{item.label}</span>
                                <div className="flex items-center gap-3">
                                    <span className="font-semibold">€ {item.value}</span>
-                                   <button onClick={() => removeExtraCost(item.id)} className="text-red-500 hover:text-red-700">
+                                   <button type="button" onClick={() => removeExtraCost(item.id)} className="text-red-500 hover:text-red-700">
                                        <Trash2 size={16} />
                                    </button>
                                </div>
@@ -391,7 +413,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                      type="text"
                      value={newExtraLabel}
                      onChange={(e) => setNewExtraLabel(e.target.value)}
-                     className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                     className="flex-1 bg-white text-slate-900 border border-slate-300 rounded-lg px-3 py-2 text-sm"
                      placeholder="Descrizione"
                    />
                    <div className="relative w-24">
@@ -400,11 +422,12 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                         min="0"
                         value={newExtraValue}
                         onChange={(e) => setNewExtraValue(e.target.value)}
-                        className="w-full border border-slate-300 rounded-lg px-2 py-2 text-sm"
+                        className="w-full bg-white text-slate-900 border border-slate-300 rounded-lg px-2 py-2 text-sm"
                         placeholder="€"
                         />
                    </div>
                    <button 
+                     type="button"
                      onClick={addExtraCost}
                      className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 rounded-lg"
                    >
@@ -539,7 +562,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                       min="1"
                       value={inputs.assistenzaGiorni}
                       onChange={(e) => handleInputChange('assistenzaGiorni', Number(e.target.value))}
-                      className="w-full border border-slate-300 rounded-lg px-3 py-2"
+                      className="w-full bg-white text-slate-900 border border-slate-300 rounded-lg px-3 py-2"
                     />
                  </div>
                  <div>
@@ -547,7 +570,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                     <select
                       value={inputs.assistenzaTecniciCount}
                       onChange={(e) => handleInputChange('assistenzaTecniciCount', Number(e.target.value))}
-                      className="w-full border border-slate-300 rounded-lg px-3 py-2"
+                      className="w-full bg-white text-slate-900 border border-slate-300 rounded-lg px-3 py-2"
                     >
                         <option value={1}>1 Tecnico</option>
                         <option value={2}>2 Tecnici</option>
@@ -568,7 +591,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                   <select 
                     value={inputs.modello}
                     onChange={(e) => handleInputChange('modello', e.target.value)}
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    className="w-full bg-white text-slate-900 border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   >
                     {models.map(m => <option key={m.nome} value={m.nome}>{m.nome}</option>)}
                   </select>
@@ -583,8 +606,11 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                     min="1"
                     value={inputs.postiAuto}
                     onChange={(e) => handleInputChange('postiAuto', Number(e.target.value))}
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    className="w-full bg-white text-slate-900 border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
+                  <div className="text-xs text-slate-500 mt-1 pl-1">
+                       Peso Struttura: <strong>{calculatedStructureWeight.toLocaleString('it-IT')} kg</strong>
+                  </div>
                 </div>
               </div>
             )}
@@ -620,7 +646,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                         min="1"
                         value={inputs.numInternalTechs}
                         onChange={(e) => handleInputChange('numInternalTechs', Number(e.target.value))}
-                        className="w-20 border border-slate-300 rounded px-2 py-1 text-center"
+                        className="w-20 bg-white text-slate-900 border border-slate-300 rounded px-2 py-1 text-center"
                       />
                     )}
                   </div>
@@ -644,7 +670,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                         min="1"
                         value={inputs.numExternalTechs}
                         onChange={(e) => handleInputChange('numExternalTechs', Number(e.target.value))}
-                        className="w-20 border border-slate-300 rounded px-2 py-1 text-center"
+                        className="w-20 bg-white text-slate-900 border border-slate-300 rounded px-2 py-1 text-center"
                       />
                     )}
                   </div>
@@ -719,7 +745,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                          <select 
                            value={inputs.tipoZavorraNome}
                            onChange={(e) => handleInputChange('tipoZavorraNome', e.target.value)}
-                           className="w-full border border-slate-300 rounded-lg px-3 py-2 mb-4"
+                           className="w-full bg-white text-slate-900 border border-slate-300 rounded-lg px-3 py-2 mb-4"
                          >
                             {ballasts.map(b => (
                                 <option key={b.nome} value={b.nome}>
@@ -760,14 +786,19 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
 
               <div className="p-6 space-y-6">
                 
-                {/* Transport Method Summary */}
-                <div className="flex items-center gap-3 p-3 bg-blue-50 text-blue-800 rounded-lg">
-                    <Truck size={20} />
-                    <div>
-                        <p className="text-xs font-bold uppercase opacity-70">Logistica Trasporto</p>
-                        <p className="font-medium">{result.transportMethod}</p>
+                {/* Transport Method Summary - HIDDEN FOR ASSISTENZA */}
+                {inputs.serviceType !== ServiceType.ASSISTENZA && (
+                    <div className="flex items-center gap-3 p-3 bg-blue-50 text-blue-800 rounded-lg">
+                        <Truck size={20} />
+                        <div className="flex-1">
+                            <p className="text-xs font-bold uppercase opacity-70">Logistica Trasporto</p>
+                            <p className="font-medium">{result.transportMethod}</p>
+                            <div className="text-xs text-slate-500 mt-1">
+                                Peso Totale Carico: <strong>{result.totalWeight.toLocaleString('it-IT')} kg</strong>
+                            </div>
+                        </div>
                     </div>
-                </div>
+                )}
 
                 {/* DETAILED BREAKDOWN TABLE */}
                 <div>
@@ -787,7 +818,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                                             {item.tooltip && <InfoTooltip text={item.tooltip} />}
                                             {item.details && <span className="block text-xs text-slate-400 font-normal ml-1 lg:ml-0 lg:block lg:w-full">{item.details}</span>}
                                         </div>
-                                        <span className="font-medium whitespace-nowrap">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                                        <span className="font-medium whitespace-nowrap">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                     </div>
                                 ))}
                             </div>
@@ -804,7 +835,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                                             {item.tooltip && <InfoTooltip text={item.tooltip} />}
                                             {item.details && <span className="block text-xs text-slate-400 font-normal ml-1 lg:ml-0 lg:block lg:w-full">{item.details}</span>}
                                         </div>
-                                        <span className="font-medium whitespace-nowrap">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                                        <span className="font-medium whitespace-nowrap">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                     </div>
                                 ))}
                             </div>
@@ -821,7 +852,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                                             {item.tooltip && <InfoTooltip text={item.tooltip} />}
                                             {item.details && <span className="block text-xs text-slate-400 font-normal ml-1 lg:ml-0 lg:block lg:w-full">{item.details}</span>}
                                         </div>
-                                        <span className="font-medium whitespace-nowrap">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                                        <span className="font-medium whitespace-nowrap">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                     </div>
                                 ))}
                             </div>
@@ -834,7 +865,7 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                                 {inputs.extraCosts.map((item) => (
                                     <div key={item.id} className="flex justify-between items-start text-sm mb-1 last:mb-0 text-slate-700">
                                         <span>{item.label}</span>
-                                        <span className="font-medium whitespace-nowrap">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                                        <span className="font-medium whitespace-nowrap">€ {item.value.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                     </div>
                                 ))}
                             </div>
@@ -845,20 +876,22 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                     <div className="mt-6 pt-4 border-t border-slate-200 space-y-2">
                         <div className="flex justify-between text-slate-700">
                             <span>Totale Installazione (Manodopera + Logistica Tecnici)</span>
-                            <span className="font-semibold">€ {result.installationTotal.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                            <span className="font-semibold">€ {result.installationTotal.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
-                        <div className="flex justify-between text-slate-700">
-                            <span>Totale Trasporto (Materiali)</span>
-                            <span className="font-semibold">€ {result.transportTotal.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
-                        </div>
+                        {result.transportTotal > 0 && (
+                            <div className="flex justify-between text-slate-700">
+                                <span>Totale Trasporto (Materiali)</span>
+                                <span className="font-semibold">€ {result.transportTotal.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            </div>
+                        )}
                          <div className="flex justify-between text-slate-700">
                             <span>Totale Noleggi</span>
-                            <span className="font-semibold">€ {result.equipmentTotal.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                            <span className="font-semibold">€ {result.equipmentTotal.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                         {result.extraCostsTotal > 0 && (
                             <div className="flex justify-between text-slate-700">
                                 <span>Totale Extra</span>
-                                <span className="font-semibold">€ {result.extraCostsTotal.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+                                <span className="font-semibold">€ {result.extraCostsTotal.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                         )}
 

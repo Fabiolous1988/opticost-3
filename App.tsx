@@ -14,6 +14,9 @@ const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   
+  // This key forces the Calculator to completely unmount and remount
+  const [resetKey, setResetKey] = useState(0);
+
   // Initialize from localStorage if available
   const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem('opticost_api_key') || '');
   const [inputKey, setInputKey] = useState<string>('');
@@ -69,6 +72,11 @@ const App: React.FC = () => {
       }
   };
 
+  const handleHardReset = () => {
+      // Incrementing key forces a remount of the component
+      setResetKey(prev => prev + 1);
+  };
+
   if (!apiKey) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
@@ -84,7 +92,7 @@ const App: React.FC = () => {
               placeholder="Incolla qui la tua API Key..."
               value={inputKey}
               onChange={(e) => setInputKey(e.target.value)}
-              className="w-full border border-slate-300 rounded-lg px-4 py-3 mb-4 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              className="w-full bg-white text-slate-900 border border-slate-300 rounded-lg px-4 py-3 mb-4 focus:ring-2 focus:ring-blue-500 focus:outline-none"
             />
             
             <button 
@@ -114,12 +122,14 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <Calculator 
+        key={resetKey} // CRITICAL: This ensures full state wipe when resetKey changes
         globalVars={globalVars} 
         transportRates={transportRates}
         models={models}
         ballasts={ballasts}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenApiKeySettings={() => setIsApiKeyModalOpen(true)}
+        onHardReset={handleHardReset}
         apiKey={apiKey}
       />
       
@@ -146,7 +156,7 @@ const App: React.FC = () => {
                     type="password" 
                     value={editKey}
                     onChange={(e) => setEditKey(e.target.value)}
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 mb-4 focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-sm"
+                    className="w-full bg-white text-slate-900 border border-slate-300 rounded-lg px-3 py-2 mb-4 focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-sm"
                 />
 
                 <div className="flex flex-col gap-2">
