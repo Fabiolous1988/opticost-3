@@ -37,6 +37,11 @@ export interface ModelData {
   ore_telo_per_posto: number;
   ore_led_per_posto: number;
   ore_coibentati_per_posto: number;
+  
+  // Transport Capacity Limits (Max Posti Auto per vehicle type)
+  max_pa_furgone: number;      // "NOSTRO MEZZO"
+  max_pa_camion_gru: number;   // "CAMION CON GRU"
+  max_pa_bilico: number;       // "BILICO COMPLETO 13MT"
 }
 
 export interface BallastData {

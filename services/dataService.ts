@@ -263,6 +263,11 @@ export const fetchModelsAndBallasts = async (): Promise<{ models: ModelData[], b
     const idxOreLed = headers.findIndex(h => h.includes('LED') || h.includes('ILLUMINAZIONE')); 
 
     const idxKg = headers.findIndex(h => h === 'KG');
+
+    // New Capacity Columns
+    const idxCapBilico = headers.findIndex(h => h.includes('BILICO') && h.includes('13MT'));
+    const idxCapCamion = headers.findIndex(h => h.includes('CAMION') && h.includes('GRU'));
+    const idxCapFurgone = headers.findIndex(h => h.includes('NOSTRO MEZZO') || h.includes('FURGONE'));
     
     const dataLines = lines.slice(1);
 
@@ -301,6 +306,9 @@ export const fetchModelsAndBallasts = async (): Promise<{ models: ModelData[], b
         let oreTelo = 0;
         let oreLed = 0;
         let oreCoib = 0;
+        let capBilico = 9999;
+        let capCamion = 9999;
+        let capFurgone = 9999;
 
         if (idxKg >= 0) peso = parseFloatSafe(cols[idxKg]);
         if (idxOreStruttura >= 0) oreStr = parseFloatSafe(cols[idxOreStruttura]);
@@ -308,6 +316,10 @@ export const fetchModelsAndBallasts = async (): Promise<{ models: ModelData[], b
         if (idxOreTelo >= 0) oreTelo = parseFloatSafe(cols[idxOreTelo]);
         if (idxOreCoib >= 0) oreCoib = parseFloatSafe(cols[idxOreCoib]);
         if (idxOreLed >= 0) oreLed = parseFloatSafe(cols[idxOreLed]);
+
+        if (idxCapBilico >= 0) capBilico = parseFloatSafe(cols[idxCapBilico]) || 9999;
+        if (idxCapCamion >= 0) capCamion = parseFloatSafe(cols[idxCapCamion]) || 9999;
+        if (idxCapFurgone >= 0) capFurgone = parseFloatSafe(cols[idxCapFurgone]) || 9999;
 
         // Default manual values if columns are missing/zero to avoid 0 cost
         if (oreTelo === 0) oreTelo = 1.0;
@@ -320,7 +332,10 @@ export const fetchModelsAndBallasts = async (): Promise<{ models: ModelData[], b
           ore_pv_per_posto: orePv,
           ore_telo_per_posto: oreTelo,
           ore_led_per_posto: oreLed,
-          ore_coibentati_per_posto: oreCoib
+          ore_coibentati_per_posto: oreCoib,
+          max_pa_bilico: capBilico,
+          max_pa_camion_gru: capCamion,
+          max_pa_furgone: capFurgone
         });
       }
     });

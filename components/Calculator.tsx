@@ -20,7 +20,7 @@ const InfoTooltip: React.FC<{ text: string }> = ({ text }) => {
   return (
     <div className="group relative inline-block ml-2 align-middle">
       <HelpCircle size={15} className="text-slate-400 hover:text-blue-500 cursor-help transition-colors" />
-      <div className="invisible group-hover:visible absolute z-50 w-72 p-3 mt-2 text-xs text-slate-100 bg-slate-800 rounded-md shadow-xl -left-1/2 transform -translate-x-1/3 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
+      <div className="invisible group-hover:visible absolute z-50 w-72 p-3 mt-2 text-xs text-slate-100 bg-slate-800 rounded-md shadow-xl -left-1/2 transform -translate-x-1/3 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-pre-line">
         {text}
         <div className="absolute w-2 h-2 bg-slate-800 transform rotate-45 -top-1 left-1/2 -ml-1"></div>
       </div>
@@ -874,9 +874,9 @@ const Calculator: React.FC<Props> = ({ globalVars, transportRates, onOpenSetting
                     
                     {/* Summary Totals */}
                     <div className="mt-6 pt-4 border-t border-slate-200 space-y-2">
-                        <div className="flex justify-between text-slate-700">
+                        <div className="flex justify-between text-slate-700 items-center">
                             <span>Totale Installazione (Manodopera + Logistica Tecnici)</span>
-                            <span className="font-semibold">€ {result.installationTotal.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            <span className="font-semibold whitespace-nowrap">€ {result.installationTotal.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                         {result.transportTotal > 0 && (
                             <div className="flex justify-between text-slate-700">
