@@ -1,14 +1,14 @@
-import { Type } from "@google/genai";
 
 export interface DiscountTier {
-  threshold: number; // e.g. 150
-  percentage: number; // e.g. 8.5
+  threshold: number;
+  percentage: number;
 }
 
 export interface GlobalVariables {
   soglia_distanza_trasferta_km: number;
   diaria_squadra_interna: number;
   soglia_minima_ore_lavoro_utili: number;
+  ore_lavoro_gialliere_standard?: number;
   ore_lavoro_giornaliere_standard: number;
   km_per_litro_furgone: number;
   costo_medio_gasolio_euro_litro: number;
@@ -17,10 +17,11 @@ export interface GlobalVariables {
   costo_orario_squadra_esterna: number;
   diaria_squadra_esterna: number;
   margine_percentuale_installazione: number;
-  costo_mezzo_sollevamento_base: number; // Legacy
-  costo_noleggio_muletto_base: number; // 700
-  costo_noleggio_muletto_extra: number; // 100
+  costo_mezzo_sollevamento_base: number;
+  costo_noleggio_muletto_base: number;
+  costo_noleggio_muletto_extra: number;
   hourly_discounts: DiscountTier[];
+  extra_vars?: Record<string, number>;
 }
 
 export interface TransportRate {
@@ -34,14 +35,14 @@ export interface ModelData {
   peso_struttura_per_posto: number;
   ore_struttura_per_posto: number;
   ore_pv_per_posto: number; 
+  ore_pv_guarnizioni_per_posto: number;
   ore_telo_per_posto: number;
   ore_led_per_posto: number;
   ore_coibentati_per_posto: number;
-  
-  // Transport Capacity Limits (Max Posti Auto per vehicle type)
-  max_pa_furgone: number;      // "NOSTRO MEZZO"
-  max_pa_camion_gru: number;   // "CAMION CON GRU"
-  max_pa_bilico: number;       // "BILICO COMPLETO 13MT"
+  ore_zavorre_per_posto: number;
+  max_pa_furgone: number;
+  max_pa_camion_gru: number;
+  max_pa_bilico: number;
 }
 
 export interface BallastData {
@@ -56,32 +57,29 @@ export enum ServiceType {
 
 export interface LogisticsData {
   distanceKm: number;
-  driveDurationMinutes: number; // Driving time
-  
+  driveDurationMinutes: number;
   avgHotelPrice: number;
   hotelSource?: string;
-  
-  // Public Transport Details (Round Trip)
   trainPrice: number;
   trainSource?: string;
-  trainDurationMinutes: number; // Specific train duration
-
+  trainDurationMinutes: number;
+  departureStation?: string;
+  arrivalStation?: string;
+  trainDepartureTime?: string; 
   planePrice: number;
   planeSource?: string;
-  planeDurationMinutes: number; // Specific flight duration
-  
+  planeDurationMinutes: number;
+  departureAirport?: string;
+  arrivalAirport?: string;
+  planeDepartureTime?: string; 
   lastMilePrice: number;
-  lastMileDurationMinutes: number; // Time to get from station/airport to site
-
-  // Ferry Data
-  ferryCostVan: number; // Costo Traghetto Furgone A/R
-  ferryCostTruck: number; // Costo Traghetto Bilico A/R
+  lastMileDurationMinutes: number;
+  lastMileDetails?: string; 
+  ferryCostVan: number;
+  ferryCostTruck: number;
   ferrySource?: string;
   isIsland: boolean;
-
-  // AI recommendation (just for highlighting)
   recommendedMode: 'train' | 'plane' | 'none';
-
   fetched: boolean;
 }
 
@@ -93,43 +91,28 @@ export interface CustomExtraCost {
 
 export interface QuoteInputs {
   serviceType: ServiceType;
-  
-  // Date
   startDate: string;
-
-  // Location
   indirizzoCompleto: string;
   logistics: LogisticsData;
-  
-  // Dynamic Extra Costs
   extraCosts: CustomExtraCost[];
-
-  // Model & Config
   modello: string;
   postiAuto: number;
-  
-  // Techs
   useInternalTechs: boolean;
   numInternalTechs: number;
   useExternalTechs: boolean;
   numExternalTechs: number;
-
-  // Assistenza specific
+  externalIsLocal: boolean; 
   assistenzaGiorni: number;
   assistenzaTecniciCount: number;
-
-  // Options
+  manualInternalWorkDays: number | null; 
   optInstallazioneTelo: boolean;
   optPannelliFotovoltaici: boolean;
+  optGuarnizioni: boolean;
   optIlluminazioneLED: boolean;
   optPannelliCoibentati: boolean;
-  
-  // Logistics Options
-  clientHasForklift: boolean; // "Disponibilità Muletto"
-  usePublicTransport: boolean; // "Mezzi Pubblici"
-  publicTransportMode: 'train' | 'plane'; // Selected specific mode
-  
-  // Ballasts
+  clientHasForklift: boolean; 
+  usePublicTransport: boolean;
+  publicTransportMode: 'train' | 'plane'; 
   optZavorre: boolean;
   tipoZavorraNome: string;
 }
@@ -138,31 +121,37 @@ export interface DetailedCostBreakdown {
   label: string;
   value: number;
   details?: string;
-  tooltip?: string; // Explanation of logic
+  formula?: string;
   isBold?: boolean;
+  tooltip?: string;
 }
 
 export interface CalculationResult {
-  totalCost: number; // Totalone (Installazione + Trasporto + Noleggi + Extra)
+  totalCost: number;
   sellPrice: number;
-  
-  // Subtotals
+  totalEquipmentRental: number;    
+  totalTransportAndTravel: number; 
+  totalManpower: number;           
   installationTotal: number;
   transportTotal: number;
   equipmentTotal: number;
   extraCostsTotal: number;
-
   transportMethod: string;
+  structureWeight: number;
   totalWeight: number;
   totalHours: number;
   totalDays: number;
-  
-  // Structured Breakdown for UI
+  workDays: number;
+  workSchedule: string[];
   internalTeamCosts: DetailedCostBreakdown[];
   externalTeamCosts: DetailedCostBreakdown[];
-  generalLogisticsCosts: DetailedCostBreakdown[]; // For material transport etc
-  
+  generalLogisticsCosts: DetailedCostBreakdown[];
   numZavorre: number;
   weightZavorre: number;
   discountAppliedPerc: number;
+}
+
+export interface ChatMessage {
+  role: 'user' | 'model';
+  text: string;
 }

@@ -1,185 +1,172 @@
-import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
-import { LogisticsData } from '../types';
+
+import { GoogleGenAI } from "@google/genai";
+import { LogisticsData, QuoteInputs, GlobalVariables, CalculationResult, ChatMessage } from '../types';
 
 const AI_ORIGIN_ADDRESS = "Via Disciplina 11, 37036 San Martino Buon Albergo, Verona, Italy";
 
-// Helper to extract JSON from Markdown or text
 const cleanJson = (text: string): string => {
   if (!text) return "{}";
-  // Find first { and last }
   const firstOpen = text.indexOf('{');
   const lastClose = text.lastIndexOf('}');
-  
   if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
       return text.substring(firstOpen, lastClose + 1);
   }
   return text;
 };
 
-// Helper to parse error messages for UI
-const parseErrorMessage = (error: any): string => {
-    let msg = error?.message || String(error);
+// Removed unused apiKey parameter - SDK must use process.env.API_KEY
+export const fetchLogisticsFromAI = async (destination: string, startDate?: string): Promise<LogisticsData> => {
+  // Always initialize with process.env.API_KEY as per guidelines
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  
+  const prompt = `Agisci come un esperto logistico senior INFLESSIBILE. Pianifica il viaggio per 2 tecnici Pergosolar.
+  PARTENZA: ${AI_ORIGIN_ADDRESS} (Verona Porta Nuova)
+  DESTINAZIONE: ${destination}
+  DATA: ${startDate || 'prossimo lunedì'}
+
+  REGOLE DI RICERCA TASSATIVE (Usa Google Search):
+  1. KM E TEMPO AUTO: Distanza stradale e tempo guida reali.
+  2. HOTEL: Prezzo REALE camera doppia/2 singole 3* a ${destination}. Metti URL Fonte funzionante.
+  3. TRENO: 
+     - Cerca treni da Verona Porta Nuova alla stazione più vicina a ${destination}.
+     - ORARIO PARTENZA: Solo treni dalle 07:00 del mattino in poi. 
+     - Riporta orario esatto, durata e Prezzo A/R totale per 1 persona.
+  4. AEREO:
+     - Cerca voli da VRN o BGY. 
+     - SE NON ESISTE UN VOLO DIRETTO O SENSATO (es. Verona-Milano), scrivi Prezzo 0 e "N/A". NON INVENTARE ROTTE.
+  5. LAST MILE:
+     - Tragitto stazione/aeroporto -> cantiere.
+     - "lastMilePrice" = COSTO TOTALE SQUADRA (2 PERSONE) ANDATA E RITORNO.
+
+  RESTITUISCI SOLO JSON:
+  {
+    "distanceKm": number,
+    "driveDurationMinutes": number,
+    "avgHotelPrice": number,
+    "hotelSource": "URL",
+    "trainPrice": number,
+    "trainSource": "URL",
+    "trainDurationMinutes": number,
+    "departureStation": "string",
+    "arrivalStation": "string",
+    "trainDepartureTime": "HH:mm",
+    "planePrice": number,
+    "planeSource": "URL",
+    "planeDurationMinutes": number,
+    "departureAirport": "string",
+    "arrivalAirport": "string",
+    "planeDepartureTime": "HH:mm",
+    "lastMilePrice": number,
+    "lastMileDurationMinutes": number,
+    "lastMileDetails": "string dettagliata",
+    "isIsland": boolean,
+    "ferryCostVan": number,
+    "ferryCostTruck": number,
+    "ferrySource": "string",
+    "recommendedMode": "train" | "plane" | "none"
+  }`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: prompt,
+      config: { tools: [{ googleSearch: {} }] }
+    });
     
-    // Check if message is a JSON string
-    try {
-        if (msg.startsWith('{')) {
-            const parsed = JSON.parse(msg);
-            if (parsed.error?.message) {
-                msg = parsed.error.message;
-            }
-        }
-    } catch (e) {
-        // ignore json parse error
-    }
-
-    if (msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("quota")) {
-        return "Quota API esaurita (Errore 429). Hai raggiunto il limite del piano gratuito.";
-    }
+    const rawData = JSON.parse(cleanJson(response.text || "{}"));
     
-    if (msg.includes("403") || msg.includes("API key")) {
-        return "Chiave API non valida o con restrizioni. Controlla la chiave.";
-    }
-
-    if (msg.includes("503") || msg.includes("overloaded")) {
-        return "Modello AI sovraccarico (Errore 503). Riprova tra poco.";
-    }
-
-    return msg;
+    return {
+      distanceKm: Number(rawData.distanceKm) || 0,
+      driveDurationMinutes: Number(rawData.driveDurationMinutes) || 0,
+      avgHotelPrice: Number(rawData.avgHotelPrice) || 120,
+      hotelSource: rawData.hotelSource,
+      trainPrice: Number(rawData.trainPrice) || 0,
+      trainSource: rawData.trainSource,
+      trainDurationMinutes: Number(rawData.trainDurationMinutes) || 0,
+      departureStation: rawData.departureStation || 'Verona Porta Nuova',
+      arrivalStation: rawData.arrivalStation || 'N/D',
+      trainDepartureTime: rawData.trainDepartureTime || '07:30',
+      planePrice: Number(rawData.planePrice) || 0,
+      planeSource: rawData.planeSource,
+      planeDurationMinutes: Number(rawData.planeDurationMinutes) || 0,
+      departureAirport: rawData.departureAirport || 'Verona (VRN)',
+      arrivalAirport: rawData.arrivalAirport || 'N/D',
+      planeDepartureTime: rawData.planeDepartureTime || '07:00',
+      lastMilePrice: Number(rawData.lastMilePrice) || 0,
+      lastMileDurationMinutes: Number(rawData.lastMileDurationMinutes) || 30,
+      lastMileDetails: rawData.lastMileDetails || 'Trasporto locale',
+      ferryCostVan: Number(rawData.ferryCostVan) || 0,
+      ferryCostTruck: Number(rawData.ferryCostTruck) || 0,
+      ferrySource: rawData.ferrySource,
+      isIsland: Boolean(rawData.isIsland),
+      recommendedMode: rawData.recommendedMode || 'none',
+      fetched: true
+    };
+  } catch (e) {
+    throw new Error("Errore durante la ricerca logistica reale.");
+  }
 };
 
-const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+/**
+ * Generates a response from the AI assistant for the chat interface.
+ * Uses current quote context to provide accurate and personalized explanations.
+ */
+// Removed unused apiKey parameter - SDK must use process.env.API_KEY
+export const getChatResponse = async (
+  history: ChatMessage[],
+  context: { inputs: QuoteInputs; vars: GlobalVariables; result: CalculationResult | null }
+): Promise<string> => {
+  // Always initialize with process.env.API_KEY as per guidelines
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  
+  const systemInstruction = `Sei l'assistente virtuale esperto di Pergosolar OptiCost. 
+  Il tuo compito è spiegare i calcoli del preventivo, i costi logistici e fornire consulenza tecnica sulla posa.
+  
+  DATI CORRENTI DEL PREVENTIVO:
+  - Modello Struttura: ${context.inputs.modello}
+  - Posti Auto: ${context.inputs.postiAuto}
+  - Peso Totale Stimato: ${context.result?.totalWeight || 0} kg
+  - Mezzo di Trasporto: ${context.result?.transportMethod || 'N/D'}
+  - Prezzo di Vendita (ivato/margine): €${context.result?.sellPrice.toLocaleString('it-IT') || '0'}
+  - Costo Vivo Aziendale: €${context.result?.totalCost.toLocaleString('it-IT') || '0'}
+  - Giorni di Cantiere Previsti: ${context.result?.totalDays || 0}
+  - Distanza Cantiere: ${context.inputs.logistics.distanceKm || 0} km
+  
+  Configurazione Squadre:
+  - Tecnici Interni: ${context.inputs.useInternalTechs ? context.inputs.numInternalTechs : 0}
+  - Tecnici Esterni: ${context.inputs.useExternalTechs ? context.inputs.numExternalTechs : 0}
+  
+  Opzioni Installate:
+  - Moduli Fotovoltaici: ${context.inputs.optPannelliFotovoltaici ? 'SI' : 'NO'}
+  - Illuminazione LED: ${context.inputs.optIlluminazioneLED ? 'SI' : 'NO'}
+  - Telo PVC: ${context.inputs.optInstallazioneTelo ? 'SI' : 'NO'}
+  - Pannelli Coibentati: ${context.inputs.optPannelliCoibentati ? 'SI' : 'NO'}
+  - Zavorre Cemento: ${context.inputs.optZavorre ? 'SI (' + context.result?.numZavorre + ' pezzi)' : 'NO'}
 
-export const fetchLogisticsFromAI = async (destination: string, apiKey: string, startDate?: string, durationDays: number = 1): Promise<LogisticsData> => {
-  if (!apiKey) {
-    throw new Error("Chiave API mancante. Inseriscila nella schermata iniziale.");
-  }
+  LINEE GUIDA PER LA RISPOSTA:
+  1. Sii professionale, tecnico ma colloquiale.
+  2. Spiega SEMPRE il "perché" di un costo se richiesto (es. perché il bilico? Perché il peso supera le 16 tonnellate).
+  3. Usa i dati del preventivo forniti sopra per essere preciso.
+  4. Se l'utente chiede come risparmiare, suggerisci l'uso di squadre esterne locali o l'ottimizzazione del numero di posti auto per sfruttare gli sconti quantità (se presenti nelle variabili).`;
 
-  const ai = new GoogleGenAI({ apiKey });
+  // Map the application chat history to the format required by the Google GenAI SDK
+  const contents = history.map(msg => ({
+    role: msg.role === 'user' ? 'user' : 'model',
+    parts: [{ text: msg.text }]
+  }));
 
-  // Safety settings to prevent blocking valid responses
-  const safetySettings = [
-    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-    { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-    { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-  ];
-
-  let dateInfo = "";
-  if (startDate) {
-      const start = new Date(startDate);
-      const end = new Date(start);
-      end.setDate(end.getDate() + durationDays);
-      dateInfo = `Dates: Departure ${startDate}, Return ${end.toISOString().split('T')[0]}.`;
-  }
-
-  const promptTools = `
-    You are a logistics planner. Origin: ${AI_ORIGIN_ADDRESS}. Destination: ${destination}.
-    ${dateInfo}
-
-    Task: Search the web to find REAL-TIME logistics data prices and their SOURCE URLs.
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-preview',
+      contents: contents,
+      config: {
+        systemInstruction: systemInstruction,
+      }
+    });
     
-    1. Exact driving distance (KM) and duration (minutes).
-    2. Average 3-star hotel price per night in destination (single room). Source URL required.
-    3. Round Trip (Andata/Ritorno) cost per person for Train (Verona PN -> Dest) and Plane (Verona VRN -> Dest). Source URL required.
-       - Also find the *duration* of the Train ride and the Flight (one way) in minutes.
-    4. Last mile cost (Taxi/Bus) from station/airport to site AND Last mile duration (minutes).
-    5. FERRY CHECK: Does reaching this destination from Verona require a Ferry (e.g. Sardinia, Sicily, Elba)?
-       - If YES, find the Round Trip cost for a Commercial Van (Furgone) and for an Articulated Truck (Bilico/Autoarticolato). Source URL required.
-
-    Return JSON:
-    {
-      "distanceKm": number,
-      "driveDurationMinutes": number,
-      "avgHotelPrice": number,
-      "hotelSource": "url_string",
-      "trainPrice": number,
-      "trainSource": "url_string",
-      "trainDurationMinutes": number,
-      "planePrice": number,
-      "planeSource": "url_string",
-      "planeDurationMinutes": number,
-      "lastMilePrice": number,
-      "lastMileDurationMinutes": number,
-      "ferryCostVan": number,
-      "ferryCostTruck": number,
-      "ferrySource": "url_string",
-      "isIsland": boolean,
-      "recommendedMode": "train" | "plane" | "none"
-    }
-  `;
-
-  // Model Rotation Strategy
-  const modelsToTry = [
-    'gemini-3-pro-preview',
-    'gemini-2.5-flash',
-  ];
-
-  let lastError: any = null;
-
-  for (let i = 0; i < modelsToTry.length; i++) {
-    const currentModel = modelsToTry[i];
-    console.log(`Logistics Attempt ${i + 1}/${modelsToTry.length} using ${currentModel}...`);
-
-    try {
-        const response = await ai.models.generateContent({
-            model: currentModel,
-            contents: promptTools,
-            config: {
-                tools: [{ googleSearch: {} }],
-                safetySettings: safetySettings
-            }
-        });
-
-        const text = response.text || "";
-        const cleaned = cleanJson(text);
-        
-        try {
-            const json = JSON.parse(cleaned);
-            return {
-                distanceKm: Number(json.distanceKm) || 0,
-                driveDurationMinutes: Number(json.driveDurationMinutes) || 0,
-                
-                avgHotelPrice: Number(json.avgHotelPrice) || 0,
-                hotelSource: json.hotelSource || "",
-                
-                trainPrice: Number(json.trainPrice) || 0,
-                trainSource: json.trainSource || "",
-                trainDurationMinutes: Number(json.trainDurationMinutes) || 0,
-                
-                planePrice: Number(json.planePrice) || 0,
-                planeSource: json.planeSource || "",
-                planeDurationMinutes: Number(json.planeDurationMinutes) || 0,
-
-                lastMilePrice: Number(json.lastMilePrice) || 0,
-                lastMileDurationMinutes: Number(json.lastMileDurationMinutes) || 30, // Default 30 min last mile if missing
-
-                ferryCostVan: Number(json.ferryCostVan) || 0,
-                ferryCostTruck: Number(json.ferryCostTruck) || 0,
-                ferrySource: json.ferrySource || "",
-                isIsland: Boolean(json.isIsland),
-
-                recommendedMode: json.recommendedMode || 'none',
-                fetched: true
-            };
-        } catch (parseError) {
-            console.warn(`JSON Parse error on ${currentModel}:`, text);
-            throw new Error("Invalid JSON response");
-        }
-
-    } catch (error: any) {
-        console.warn(`${currentModel} failed:`, error);
-        lastError = error;
-        
-        const errMsg = String(error);
-        if (errMsg.includes("403") || errMsg.includes("API key")) {
-            throw new Error(parseErrorMessage(error));
-        }
-
-        if (i < modelsToTry.length - 1) {
-             await wait(2000);
-        }
-    }
+    return response.text || "Non ho potuto generare una risposta valida in questo momento.";
+  } catch (e) {
+    console.error("AI Chat Error:", e);
+    throw new Error("Errore durante la comunicazione con l'assistente AI.");
   }
-
-  throw new Error(parseErrorMessage(lastError));
 };
