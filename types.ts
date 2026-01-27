@@ -4,11 +4,17 @@ export interface DiscountTier {
   percentage: number;
 }
 
+export interface OrderedVariable {
+  label: string;
+  value: number;
+  internalKey: string | null;
+}
+
 export interface GlobalVariables {
+  // Valori per calcoli interni
   soglia_distanza_trasferta_km: number;
   diaria_squadra_interna: number;
   soglia_minima_ore_lavoro_utili: number;
-  ore_lavoro_gialliere_standard?: number;
   ore_lavoro_giornaliere_standard: number;
   km_per_litro_furgone: number;
   costo_medio_gasolio_euro_litro: number;
@@ -20,8 +26,11 @@ export interface GlobalVariables {
   costo_mezzo_sollevamento_base: number;
   costo_noleggio_muletto_base: number;
   costo_noleggio_muletto_extra: number;
+  ore_led_per_posto_global: number;
   hourly_discounts: DiscountTier[];
-  extra_vars?: Record<string, number>;
+  
+  // Mirroring esatto per UI
+  ordered_vars: OrderedVariable[];
 }
 
 export interface TransportRate {
@@ -55,6 +64,14 @@ export enum ServiceType {
   ASSISTENZA = 'ASSISTENZA',
 }
 
+export interface LastMileOption {
+  type: string;
+  price: number;
+  durationMinutes: number;
+  details: string;
+  sourceUrl?: string;
+}
+
 export interface LogisticsData {
   distanceKm: number;
   driveDurationMinutes: number;
@@ -72,9 +89,10 @@ export interface LogisticsData {
   departureAirport?: string;
   arrivalAirport?: string;
   planeDepartureTime?: string; 
-  lastMilePrice: number;
+  lastMilePrice: number; // Costo dell'opzione selezionata
   lastMileDurationMinutes: number;
   lastMileDetails?: string; 
+  lastMileOptions: LastMileOption[];
   ferryCostVan: number;
   ferryCostTruck: number;
   ferrySource?: string;
@@ -94,6 +112,7 @@ export interface QuoteInputs {
   startDate: string;
   indirizzoCompleto: string;
   logistics: LogisticsData;
+  selectedLastMileIndex: number;
   extraCosts: CustomExtraCost[];
   modello: string;
   postiAuto: number;
@@ -115,6 +134,7 @@ export interface QuoteInputs {
   publicTransportMode: 'train' | 'plane'; 
   optZavorre: boolean;
   tipoZavorraNome: string;
+  extraDaysCamionGru: number;
 }
 
 export interface DetailedCostBreakdown {

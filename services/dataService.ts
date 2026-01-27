@@ -1,5 +1,5 @@
 
-import { GlobalVariables, TransportRate, ModelData, BallastData, DiscountTier } from '../types';
+import { GlobalVariables, TransportRate, ModelData, BallastData, DiscountTier, OrderedVariable } from '../types';
 
 const MODELS_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vR9RtPO7RSU2bQMuQLxtF44P0IT0ccAp4NgMAmSx6u-xGBNtSb2GPrN9YbVdLA7XQ/pub?output=csv';
 const VARIABLES_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSk32mnQqJSHloRb9OtVSqjpMvcNrnN9c5INGTUXr6N3t0AwisjfftWyIT8m-YBgg/pub?output=csv';
@@ -53,11 +53,13 @@ export const fetchGlobalVariables = async (): Promise<GlobalVariables> => {
       costo_mezzo_sollevamento_base: 1000,
       costo_noleggio_muletto_base: 700,
       costo_noleggio_muletto_extra: 100,
+      ore_led_per_posto_global: 0.5,
       hourly_discounts: [],
-      extra_vars: {}
+      ordered_vars: []
     };
 
     const discounts: DiscountTier[] = [];
+    const ordered: OrderedVariable[] = [];
 
     lines.forEach(line => {
       const parts = splitCsvLine(line);
@@ -65,33 +67,67 @@ export const fetchGlobalVariables = async (): Promise<GlobalVariables> => {
       
       const label = parts[0].trim();
       const val = parseFloatSafe(parts[1]);
+      let internalKey: string | null = null;
 
-      switch (label) {
-        case 'Soglia Trasferta (km)': vars.soglia_distanza_trasferta_km = val; break;
-        case 'Diaria Squadra Interna (€/giorno)':
-        case 'diaria giornaliera squadra interna (€)': vars.diaria_squadra_interna = val; break;
-        case 'Diaria Squadra Esterna (€/giorno)':
-        case 'diaria giornaliera squadra esterna (€)': vars.diaria_squadra_esterna = val; break;
-        case 'Soglia minima ore lavoro utili (h)': vars.soglia_minima_ore_lavoro_utili = val; break;
-        case 'Costo Gasolio (€/l)': vars.costo_medio_gasolio_euro_litro = val; break;
-        case 'Km per Litro (Furgone)': vars.km_per_litro_furgone = val; break;
-        case 'Usura Mezzo (€/Km)': vars.costo_usura_mezzo_euro_km = val; break;
-        case 'Noleggio Muletto Base (€)': vars.costo_noleggio_muletto_base = val; break;
-        case 'Noleggio Muletto Extra (€/giorno)': vars.costo_noleggio_muletto_extra = val; break;
-        case 'Ore Lavoro Giornaliere': vars.ore_lavoro_giornaliere_standard = val; break;
-        case 'Margine Installazione (%)': vars.margine_percentuale_installazione = val; break;
-        case 'paga oraria tecnico squadra interna (€)': vars.costo_orario_tecnico_interno = val; break;
-        case 'paga oraria tecnico squadra esterna (€)': vars.costo_orario_squadra_esterna = val; break;
+      const lowerLabel = label.toLowerCase();
+
+      // Mapping rigoroso dei valori necessari al motore di calcolo
+      if (lowerLabel.includes('soglia trasferta')) {
+        vars.soglia_distanza_trasferta_km = val;
+        internalKey = 'soglia_distanza_trasferta_km';
+      } else if (lowerLabel.includes('diaria giornaliera squadra interna')) {
+        vars.diaria_squadra_interna = val;
+        internalKey = 'diaria_squadra_interna';
+      } else if (lowerLabel.includes('diaria giornaliera squadra esterna')) {
+        vars.diaria_squadra_esterna = val;
+        internalKey = 'diaria_squadra_esterna';
+      } else if (lowerLabel.includes('soglia minima ore lavoro utili')) {
+        vars.soglia_minima_ore_lavoro_utili = val;
+        internalKey = 'soglia_minima_ore_lavoro_utili';
+      } else if (lowerLabel.includes('costo gasolio')) {
+        vars.costo_medio_gasolio_euro_litro = val;
+        internalKey = 'costo_medio_gasolio_euro_litro';
+      } else if (lowerLabel.includes('km per litro')) {
+        vars.km_per_litro_furgone = val;
+        internalKey = 'km_per_litro_furgone';
+      } else if (lowerLabel.includes('usura mezzo')) {
+        vars.costo_usura_mezzo_euro_km = val;
+        internalKey = 'costo_usura_mezzo_euro_km';
+      } else if (lowerLabel.includes('noleggio muletto base')) {
+        vars.costo_noleggio_muletto_base = val;
+        internalKey = 'costo_noleggio_muletto_base';
+      } else if (lowerLabel.includes('noleggio muletto extra')) {
+        vars.costo_noleggio_muletto_extra = val;
+        internalKey = 'costo_noleggio_muletto_extra';
+      } else if (lowerLabel.includes('ore lavoro giornaliere')) {
+        vars.ore_lavoro_giornaliere_standard = val;
+        internalKey = 'ore_lavoro_giornaliere_standard';
+      } else if (lowerLabel.includes('margine installazione')) {
+        vars.margine_percentuale_installazione = val;
+        internalKey = 'margine_percentuale_installazione';
+      } else if (lowerLabel.includes('paga oraria tecnico squadra interna')) {
+        vars.costo_orario_tecnico_interno = val;
+        internalKey = 'costo_orario_tecnico_interno';
+      } else if (lowerLabel.includes('paga oraria tecnico squadra esterna')) {
+        vars.costo_orario_squadra_esterna = val;
+        internalKey = 'costo_orario_squadra_esterna';
+      } else if (lowerLabel.includes('luci led')) {
+        vars.ore_led_per_posto_global = val;
+        internalKey = 'ore_led_per_posto_global';
       }
 
-      if (label.toLowerCase().includes('sconto ore per >')) {
-          const match = label.match(/>(\d+)/);
-          if (match) {
-              discounts.push({ threshold: parseInt(match[1]), percentage: val });
-          }
+      // Se non è uno sconto, lo aggiungiamo alle variabili ordinate per il mirroring UI
+      if (!lowerLabel.includes('sconto ore per >')) {
+        ordered.push({ label, value: val, internalKey });
+      } else {
+        const match = label.match(/>(\d+)/);
+        if (match) {
+            discounts.push({ threshold: parseInt(match[1]), percentage: val });
+        }
       }
     });
 
+    vars.ordered_vars = ordered;
     vars.hourly_discounts = discounts.sort((a, b) => b.threshold - a.threshold);
     return vars;
   } catch (e) {
@@ -111,8 +147,9 @@ export const fetchGlobalVariables = async (): Promise<GlobalVariables> => {
       costo_mezzo_sollevamento_base: 1000,
       costo_noleggio_muletto_base: 700,
       costo_noleggio_muletto_extra: 100,
+      ore_led_per_posto_global: 0.5,
       hourly_discounts: [],
-      extra_vars: {}
+      ordered_vars: []
     };
   }
 };
@@ -173,7 +210,6 @@ export const fetchModelsAndBallasts = async (): Promise<{ models: ModelData[], b
     const headerRow = splitCsvLine(lines[0]);
     const headers = headerRow.map(h => h.trim());
 
-    // Mappatura TASSATIVA basata sui nomi colonna indicati
     const idxName = headers.findIndex(h => h === 'MODELLO' || h === 'STRUTTURA' || h.toUpperCase().includes('MODELLO'));
     const idxOreStruttura = headers.findIndex(h => h === 'ORE_INSTALLAZIONE_1PA');
     const idxOrePV = headers.findIndex(h => h === 'ORE_INSTALLAZIONE_1PA_PF');

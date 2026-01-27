@@ -1,6 +1,6 @@
 
 import { GoogleGenAI } from "@google/genai";
-import { LogisticsData, QuoteInputs, GlobalVariables, CalculationResult, ChatMessage } from '../types';
+import { LogisticsData, QuoteInputs, GlobalVariables, CalculationResult, ChatMessage, LastMileOption } from '../types';
 
 const AI_ORIGIN_ADDRESS = "Via Disciplina 11, 37036 San Martino Buon Albergo, Verona, Italy";
 
@@ -14,51 +14,57 @@ const cleanJson = (text: string): string => {
   return text;
 };
 
-// Removed unused apiKey parameter - SDK must use process.env.API_KEY
 export const fetchLogisticsFromAI = async (destination: string, startDate?: string): Promise<LogisticsData> => {
-  // Always initialize with process.env.API_KEY as per guidelines
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
-  const prompt = `Agisci come un esperto logistico senior INFLESSIBILE. Pianifica il viaggio per 2 tecnici Pergosolar.
-  PARTENZA: ${AI_ORIGIN_ADDRESS} (Verona Porta Nuova)
-  DESTINAZIONE: ${destination}
-  DATA: ${startDate || 'prossimo lunedì'}
+  const prompt = `Agisci come un analista logistico Pergosolar INFLESSIBILE ed ESPERTO.
+  PIANIFICAZIONE VIAGGIO:
+  DA: ${AI_ORIGIN_ADDRESS} (Verona)
+  A: ${destination}
+  DATA PARTENZA: ${startDate || 'prossimo lunedì'}
 
-  REGOLE DI RICERCA TASSATIVE (Usa Google Search):
-  1. KM E TEMPO AUTO: Distanza stradale e tempo guida reali.
-  2. HOTEL: Prezzo REALE camera doppia/2 singole 3* a ${destination}. Metti URL Fonte funzionante.
-  3. TRENO: 
-     - Cerca treni da Verona Porta Nuova alla stazione più vicina a ${destination}.
-     - ORARIO PARTENZA: Solo treni dalle 07:00 del mattino in poi. 
-     - Riporta orario esatto, durata e Prezzo A/R totale per 1 persona.
-  4. AEREO:
-     - Cerca voli da VRN o BGY. 
-     - SE NON ESISTE UN VOLO DIRETTO O SENSATO (es. Verona-Milano), scrivi Prezzo 0 e "N/A". NON INVENTARE ROTTE.
-  5. LAST MILE:
-     - Tragitto stazione/aeroporto -> cantiere.
-     - "lastMilePrice" = COSTO TOTALE SQUADRA (2 PERSONE) ANDATA E RITORNO.
+  REGOLE DI RICERCA TASSATIVE (Usa Google Search per verificare i dati):
+  1. HOTEL: Trova un hotel 3/4 stelle REALE a ${destination}. 
+     - "avgHotelPrice": Costo medio a notte PER 1 PERSONA.
+     - "hotelSource": DEVE ESSERE UN LINK FUNZIONANTE. Se non trovi l'URL esatto dell'hotel, USA SEMPRE: "https://www.booking.com/searchresults.it.html?ss=${encodeURIComponent(destination)}". 
+     - TASSATIVO: MAI inventare link profondi (deep links) che potrebbero generare 404. Se hai il minimo dubbio, usa la homepage di Booking.com o la ricerca per città.
+  
+  2. TRENO/AEREO: 
+     - "trainPrice" e "planePrice": Costo biglietto A/R PER 1 PERSONA.
+     - "trainSource"/"planeSource": Genera link con parametri di ricerca (es. Trenitalia o Skyscanner con partenza Verona e arrivo ${destination}). Se non sei certo della validità del link parametrizzato, usa la HOMEPAGE ufficiale (es. trenitalia.com).
 
-  RESTITUISCI SOLO JSON:
+  3. LAST MILE (STAZIONE/AEROPORTO -> CANTIERE):
+     - Fornisci almeno DUE alternative reali e distinte (es. Taxi vs Bus locale, o Noleggio Auto).
+     - Per ogni opzione: "type", "price" (TOTALE A/R per 2 persone), "durationMinutes", "details", "sourceUrl".
+     - TASSATIVO LINK: Se non trovi il link specifico del servizio locale, USA L'URL DELLA HOMEPAGE del servizio (es. radiotaxi.it) o il link a Google Maps della zona. NO 404.
+
+  RISPONDI SOLO CON QUESTO JSON:
   {
     "distanceKm": number,
     "driveDurationMinutes": number,
     "avgHotelPrice": number,
-    "hotelSource": "URL",
+    "hotelSource": "string",
     "trainPrice": number,
-    "trainSource": "URL",
+    "trainSource": "string",
     "trainDurationMinutes": number,
     "departureStation": "string",
     "arrivalStation": "string",
     "trainDepartureTime": "HH:mm",
     "planePrice": number,
-    "planeSource": "URL",
+    "planeSource": "string",
     "planeDurationMinutes": number,
     "departureAirport": "string",
     "arrivalAirport": "string",
     "planeDepartureTime": "HH:mm",
-    "lastMilePrice": number,
-    "lastMileDurationMinutes": number,
-    "lastMileDetails": "string dettagliata",
+    "lastMileOptions": [
+      {
+        "type": "string",
+        "price": number,
+        "durationMinutes": number,
+        "details": "string",
+        "sourceUrl": "string"
+      }
+    ],
     "isIsland": boolean,
     "ferryCostVan": number,
     "ferryCostTruck": number,
@@ -75,26 +81,52 @@ export const fetchLogisticsFromAI = async (destination: string, startDate?: stri
     
     const rawData = JSON.parse(cleanJson(response.text || "{}"));
     
+    const lastMileOpts: LastMileOption[] = [];
+    
+    // Opzione "Nessuno" SEMPRE presente e SEMPRE al primo posto (index 0)
+    lastMileOpts.push({
+      type: 'Nessuno / Passaggio Privato',
+      price: 0,
+      durationMinutes: 30,
+      details: 'Nessun costo di trasporto locale previsto. La squadra si muove autonomamente o con mezzi del cliente.'
+    });
+
+    if (rawData.lastMileOptions && Array.isArray(rawData.lastMileOptions)) {
+      rawData.lastMileOptions.forEach((o: any) => {
+        // Evitiamo di duplicare opzioni a costo zero se già presenti
+        if (o.price > 0 || o.type !== 'Nessuno') {
+          lastMileOpts.push({
+            type: o.type || 'Alternativa',
+            price: Number(o.price) || 0,
+            durationMinutes: Number(o.durationMinutes) || 30,
+            details: o.details || 'Dettagli non disponibili',
+            sourceUrl: o.sourceUrl || ''
+          });
+        }
+      });
+    }
+
     return {
       distanceKm: Number(rawData.distanceKm) || 0,
       driveDurationMinutes: Number(rawData.driveDurationMinutes) || 0,
       avgHotelPrice: Number(rawData.avgHotelPrice) || 120,
-      hotelSource: rawData.hotelSource,
+      hotelSource: rawData.hotelSource || 'https://www.booking.com',
       trainPrice: Number(rawData.trainPrice) || 0,
-      trainSource: rawData.trainSource,
+      trainSource: rawData.trainSource || 'https://www.trenitalia.com',
       trainDurationMinutes: Number(rawData.trainDurationMinutes) || 0,
       departureStation: rawData.departureStation || 'Verona Porta Nuova',
-      arrivalStation: rawData.arrivalStation || 'N/D',
+      arrivalStation: rawData.arrivalStation || 'Stazione Locale',
       trainDepartureTime: rawData.trainDepartureTime || '07:30',
       planePrice: Number(rawData.planePrice) || 0,
-      planeSource: rawData.planeSource,
+      planeSource: rawData.planeSource || 'https://www.skyscanner.it',
       planeDurationMinutes: Number(rawData.planeDurationMinutes) || 0,
       departureAirport: rawData.departureAirport || 'Verona (VRN)',
-      arrivalAirport: rawData.arrivalAirport || 'N/D',
+      arrivalAirport: rawData.arrivalAirport || 'Aeroporto Vicino',
       planeDepartureTime: rawData.planeDepartureTime || '07:00',
-      lastMilePrice: Number(rawData.lastMilePrice) || 0,
-      lastMileDurationMinutes: Number(rawData.lastMileDurationMinutes) || 30,
-      lastMileDetails: rawData.lastMileDetails || 'Trasporto locale',
+      lastMileOptions: lastMileOpts,
+      lastMilePrice: lastMileOpts[0].price,
+      lastMileDurationMinutes: lastMileOpts[0].durationMinutes,
+      lastMileDetails: lastMileOpts[0].details,
       ferryCostVan: Number(rawData.ferryCostVan) || 0,
       ferryCostTruck: Number(rawData.ferryCostTruck) || 0,
       ferrySource: rawData.ferrySource,
@@ -103,70 +135,45 @@ export const fetchLogisticsFromAI = async (destination: string, startDate?: stri
       fetched: true
     };
   } catch (e) {
-    throw new Error("Errore durante la ricerca logistica reale.");
+    throw new Error("Errore durante l'analisi logistica AI.");
   }
 };
 
-/**
- * Generates a response from the AI assistant for the chat interface.
- * Uses current quote context to provide accurate and personalized explanations.
- */
-// Removed unused apiKey parameter - SDK must use process.env.API_KEY
 export const getChatResponse = async (
   history: ChatMessage[],
   context: { inputs: QuoteInputs; vars: GlobalVariables; result: CalculationResult | null }
 ): Promise<string> => {
-  // Always initialize with process.env.API_KEY as per guidelines
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
-  const systemInstruction = `Sei l'assistente virtuale esperto di Pergosolar OptiCost. 
-  Il tuo compito è spiegare i calcoli del preventivo, i costi logistici e fornire consulenza tecnica sulla posa.
+  const systemInstruction = `Sei l'assistente esperto di OptiCost Pergosolar. 
   
-  DATI CORRENTI DEL PREVENTIVO:
-  - Modello Struttura: ${context.inputs.modello}
-  - Posti Auto: ${context.inputs.postiAuto}
-  - Peso Totale Stimato: ${context.result?.totalWeight || 0} kg
-  - Mezzo di Trasporto: ${context.result?.transportMethod || 'N/D'}
-  - Prezzo di Vendita (ivato/margine): €${context.result?.sellPrice.toLocaleString('it-IT') || '0'}
-  - Costo Vivo Aziendale: €${context.result?.totalCost.toLocaleString('it-IT') || '0'}
-  - Giorni di Cantiere Previsti: ${context.result?.totalDays || 0}
-  - Distanza Cantiere: ${context.inputs.logistics.distanceKm || 0} km
-  
-  Configurazione Squadre:
-  - Tecnici Interni: ${context.inputs.useInternalTechs ? context.inputs.numInternalTechs : 0}
-  - Tecnici Esterni: ${context.inputs.useExternalTechs ? context.inputs.numExternalTechs : 0}
-  
-  Opzioni Installate:
-  - Moduli Fotovoltaici: ${context.inputs.optPannelliFotovoltaici ? 'SI' : 'NO'}
-  - Illuminazione LED: ${context.inputs.optIlluminazioneLED ? 'SI' : 'NO'}
-  - Telo PVC: ${context.inputs.optInstallazioneTelo ? 'SI' : 'NO'}
-  - Pannelli Coibentati: ${context.inputs.optPannelliCoibentati ? 'SI' : 'NO'}
-  - Zavorre Cemento: ${context.inputs.optZavorre ? 'SI (' + context.result?.numZavorre + ' pezzi)' : 'NO'}
+  LOGICA TECNICA SORGENTE:
+  1. VIAGGI (Weekend): calculateTripsByWeekend(startDate, workDays). 1 viaggio base + 1 per ogni domenica lavorativa.
+  2. RIENTRO HQ (19:00): Se Fine Lavori (17:30) + Viaggio > 19:00, scatta +1 notte hotel e +1 giorno vitto.
+  3. PREZZI PER PERSONA: Hotel, vitto e biglietti sono basati sul costo unitario per tecnico.
+  4. LAST MILE: L'utente può scegliere tra diverse opzioni, inclusa l'opzione "Nessuno" a costo zero.
 
-  LINEE GUIDA PER LA RISPOSTA:
-  1. Sii professionale, tecnico ma colloquiale.
-  2. Spiega SEMPRE il "perché" di un costo se richiesto (es. perché il bilico? Perché il peso supera le 16 tonnellate).
-  3. Usa i dati del preventivo forniti sopra per essere preciso.
-  4. Se l'utente chiede come risparmiare, suggerisci l'uso di squadre esterne locali o l'ottimizzazione del numero di posti auto per sfruttare gli sconti quantità (se presenti nelle variabili).`;
+  CONTESTO ATTUALE:
+  - Indirizzo: ${context.inputs.indirizzoCompleto}
+  - Squadra Interna: ${context.inputs.useInternalTechs ? (context.inputs.serviceType === 'ASSISTENZA' ? context.inputs.assistenzaTecniciCount : context.inputs.numInternalTechs) : 0} persone.
+  - Giorni totali: ${context.result?.workDays}
+  - Last Mile Selezionato: ${context.inputs.logistics.lastMileOptions[context.inputs.selectedLastMileIndex]?.type || 'Nessuno'}
 
-  // Map the application chat history to the format required by the Google GenAI SDK
-  const contents = history.map(msg => ({
-    role: msg.role === 'user' ? 'user' : 'model',
-    parts: [{ text: msg.text }]
+  Sii trasparente e cita i costi per persona. Se vedi link 404 segnalalo all'utente e suggerisci di usare la homepage del fornitore.`;
+
+  const contents = history.map(msg => ({ 
+    role: msg.role === 'user' ? 'user' : 'model', 
+    parts: [{ text: msg.text }] 
   }));
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: contents,
-      config: {
-        systemInstruction: systemInstruction,
-      }
+    const response = await ai.models.generateContent({ 
+      model: 'gemini-3-pro-preview', 
+      contents, 
+      config: { systemInstruction } 
     });
-    
-    return response.text || "Non ho potuto generare una risposta valida in questo momento.";
-  } catch (e) {
-    console.error("AI Chat Error:", e);
-    throw new Error("Errore durante la comunicazione con l'assistente AI.");
+    return response.text || "Spiacente, non riesco a elaborare la risposta.";
+  } catch (e) { 
+    throw new Error("Errore comunicazione AI."); 
   }
 };
